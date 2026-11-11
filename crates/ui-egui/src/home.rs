@@ -72,11 +72,117 @@ fn tool_card(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static c
 }
 
 /// Draw the Home page with the welcome text, community card and recent documents.
+#[cfg(not(target_arch = "wasm32"))]
+fn ensure_recent_thumb_worker(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    if app.recent_thumb_tx.is_some() {
+        return;
+    }
+    let (tx_work, rx_work) = std::sync::mpsc::channel::<String>();
+    let (tx_res, rx_res) = std::sync::mpsc::channel::<(String, Option<(u32, u32, Vec<u8>)>)>();
+    app.recent_thumb_tx = Some(tx_work);
+    app.recent_thumb_rx = Some(rx_res);
+
+    let ctx_clone = ctx.clone();
+    let _ = std::thread::Builder::new().name("recent-thumbs".into()).spawn(move || {
+        while let Ok(path) = rx_work.recv() {
+            let res = load_first_page_thumbnail(&path);
+            let _ = tx_res.send((path, res));
+            ctx_clone.request_repaint();
+        }
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn ensure_recent_thumb_worker(_app: &mut PdfCraftApp, _ctx: &egui::Context) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_first_page_thumbnail(path: &str) -> Option<(u32, u32, Vec<u8>)> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut renderer = pdfcraft_render::PageRenderer::new(std::sync::Arc::new(bytes), pdfcraft_render::RenderConfig::default().on_screen());
+    let req = pdfcraft_render::RenderRequest { page: 0, scale: 0.15, preview: true, ..Default::default() };
+    let rendered = renderer.render(req);
+    if rendered.error.is_none() && rendered.width > 0 && rendered.height > 0 && !rendered.rgba.is_empty() {
+        Some((rendered.width, rendered.height, rendered.rgba.to_vec()))
+    } else {
+        None
+    }
+}
+
+fn draw_recent_thumbnail(ui: &egui::Ui, rect: Rect, thumb: Option<&egui::TextureHandle>) {
+    // 1. Soft drop shadow behind the paper sheet
+    ui.painter().rect_filled(rect.translate(vec2(1.0, 1.5)), CornerRadius::same(2), egui::Color32::from_black_alpha(24));
+    ui.painter().rect_filled(rect.translate(vec2(0.5, 0.8)), CornerRadius::same(2), egui::Color32::from_black_alpha(16));
+
+    // 2. White paper sheet base
+    ui.painter().rect_filled(rect, CornerRadius::same(2), egui::Color32::WHITE);
+
+    if let Some(tex) = thumb {
+        // Rendered PDF first page!
+        ui.painter().image(tex.id(), rect.shrink(0.5), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        ui.painter().rect_stroke(rect, CornerRadius::same(2), Stroke::new(1.0, egui::Color32::from_black_alpha(45)), egui::StrokeKind::Inside);
+    } else {
+        // Fallback procedural paper document miniature
+        ui.painter().rect_stroke(rect, CornerRadius::same(2), Stroke::new(1.0, egui::Color32::from_rgb(0xD1, 0xD5, 0xDB)), egui::StrokeKind::Inside);
+
+        // Header bar placeholder
+        ui.painter().rect_filled(
+            Rect::from_min_size(rect.min + vec2(4.0, 5.0), vec2(14.0, 2.5)),
+            CornerRadius::same(1),
+            egui::Color32::from_rgb(0xE0, 0x3E, 0x3E),
+        );
+
+        // Document content lines (subtle text placeholder lines)
+        let line_color = egui::Color32::from_rgb(0xCB, 0xD5, 0xE1);
+        let widths = [22.0, 18.0, 24.0, 16.0];
+        for (i, &w) in widths.iter().enumerate() {
+            let y = rect.min.y + 11.0 + (i as f32) * 4.0;
+            ui.painter().rect_filled(Rect::from_min_size(egui::pos2(rect.min.x + 4.0, y), vec2(w, 1.5)), CornerRadius::same(1), line_color);
+        }
+
+        // Table grid representation at the bottom
+        let table_rect = Rect::from_min_size(rect.min + vec2(4.0, 28.0), vec2(24.0, 11.0));
+        ui.painter().rect_stroke(
+            table_rect,
+            CornerRadius::ZERO,
+            Stroke::new(0.8, egui::Color32::from_rgb(0xE2, 0xE8, 0xF0)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().line_segment([table_rect.left_center(), table_rect.right_center()], Stroke::new(0.8, egui::Color32::from_rgb(0xE2, 0xE8, 0xF0)));
+        ui.painter().line_segment([table_rect.center_top(), table_rect.center_bottom()], Stroke::new(0.8, egui::Color32::from_rgb(0xE2, 0xE8, 0xF0)));
+
+        // Top-right dog-ear fold
+        let fold_size = 6.0;
+        let p_top = egui::pos2(rect.right() - fold_size, rect.top());
+        let p_diag = egui::pos2(rect.right(), rect.top() + fold_size);
+        let p_inner = egui::pos2(rect.right() - fold_size, rect.top() + fold_size);
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![p_top, p_diag, p_inner],
+            egui::Color32::from_rgb(0xEE, 0xF2, 0xF6),
+            Stroke::new(0.8, egui::Color32::from_rgb(0xD1, 0xD5, 0xDB)),
+        ));
+    }
+}
+
 pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
+    #[cfg(not(target_arch = "wasm32"))]
+    ensure_recent_thumb_worker(app, ui.ctx());
+
+    if let Some(rx) = &app.recent_thumb_rx {
+        while let Ok((path, res)) = rx.try_recv() {
+            if let Some((w, h, rgba)) = res {
+                let image = egui::ColorImage::from_rgba_premultiplied([w as usize, h as usize], &rgba);
+                let tex = ui.ctx().load_texture(format!("recent-thumb-{}", path), image, egui::TextureOptions::LINEAR);
+                app.recent_thumbs.insert(path, Some(tex));
+            } else {
+                app.recent_thumbs.insert(path, None);
+            }
+        }
+    }
+
     let t = Tokens::get(ui.ctx());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 36, right: 36, top: 28, bottom: 28 }).show(ui, |ui| {
-            ui.label(egui::RichText::new(tl!("Welcome to PdfCraft")).font(theme::semibold(24.0)));
+            ui.label(egui::RichText::new(tl!("Welcome to PdfCraft").replace("PdfCraft", "PDF Craft")).font(theme::semibold(24.0)));
             ui.label(
                 egui::RichText::new(tl!("An open-source PDF workbench — local, private, and scriptable."))
                     .color(t.text_muted)
@@ -208,7 +314,8 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             let mut open = None;
             let mut remove = None;
             for r in app.recent.iter().take(app.recent_limit) {
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
+                let row_height = 54.0;
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &r.name));
                 let press = theme::Press::track(ui, &resp);
                 // The row, not its response: the pointer stays "in" the row over its remove button.
@@ -234,13 +341,19 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     }
                 }
                 let body = rect.translate(press.offset());
-                icons::paint(
-                    ui,
-                    Rect::from_min_size(body.min + vec2(10.0, 11.0), vec2(24.0, 24.0)),
-                    "file-text",
-                    22.0,
-                    egui::Color32::from_rgb(0xE0, 0x3E, 0x3E),
-                );
+
+                // Thumbnail request and rendering
+                if !app.recent_thumbs.contains_key(&r.path) {
+                    app.recent_thumbs.insert(r.path.clone(), None);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(tx) = &app.recent_thumb_tx {
+                        let _ = tx.send(r.path.clone());
+                    }
+                }
+                let thumb_tex = app.recent_thumbs.get(&r.path).and_then(|t| t.as_ref());
+                let thumb_rect = Rect::from_min_size(body.min + vec2(10.0, 5.0), vec2(32.0, 44.0));
+                draw_recent_thumbnail(ui, thumb_rect, thumb_tex);
+
                 // Room on the right for the remove button.
                 let detail = ui.painter().text(
                     body.right_center() - vec2(48.0, 0.0),
@@ -250,9 +363,11 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     t.text_muted,
                 );
                 // The name and path stop short of the page count; hovering shows the whole path.
-                let width = detail.left() - 16.0 - (body.left() + 46.0);
-                widgets::row_text(ui, body.min + vec2(46.0, 15.0), r.name.as_str(), theme::medium(13.5), t.text, width);
-                widgets::row_text(ui, body.min + vec2(46.0, 32.0), r.path.as_str(), theme::regular(11.0), t.text_faint, width);
+                let text_x = body.left() + 52.0;
+                let width = detail.left() - 16.0 - text_x;
+                widgets::row_text(ui, body.min + vec2(52.0, 12.0), r.name.as_str(), theme::medium(13.5), t.text, width);
+                let subtitle = format!("PDF  ·  {}", r.path);
+                widgets::row_text(ui, body.min + vec2(52.0, 31.0), subtitle.as_str(), theme::regular(11.0), t.text_faint, width);
                 if theme::hand(resp).on_hover_text(&r.path).clicked() {
                     open = Some(r.path.clone());
                 }
@@ -262,8 +377,10 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             }
             if let Some(p) = remove {
                 app.recent.retain(|r| r.path != p);
+                app.recent_thumbs.remove(&p);
             }
             if clear {
+                app.recent_thumbs.clear();
                 app.execute("file.clear_recent");
             }
             ui.add_space(20.0);

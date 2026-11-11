@@ -838,6 +838,8 @@ pub enum ViewAction {
     /// Save the document as the grid shows it.
     Save,
     Extract,
+    ShareSelection(crate::share::ShareTarget),
+    ShareDoc(crate::share::ShareTarget),
     Split,
     /// Split before each selected page: opens Split on that mode.
     SplitBeforeSelected,
@@ -887,6 +889,7 @@ pub(crate) enum PageMenuAction {
     AddText,
     AddImage,
     DeletePage(usize),
+    SharePage(usize, crate::share::ShareTarget),
     ExportPdf,
     Find,
     DocProperties,
@@ -970,6 +973,14 @@ pub(crate) fn default_page_context_menu(ui: &mut egui::Ui, page: usize, at: [f64
     pick(ui.button(tl!("Find text or tools")), ui, A::Find);
     pick(ui.button(tl!("Rotate view clockwise")), ui, A::RotateCW);
     pick(ui.button(tl!("Document properties…")), ui, A::DocProperties);
+
+    ui.separator();
+
+    ui.menu_button(tl!("Compartilhar página atual"), |ui| {
+        crate::share::share_menu(ui, |target| {
+            *action = Some(A::SharePage(page, target));
+        });
+    });
 }
 
 impl DocView {
@@ -3794,6 +3805,9 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
         }
         Some(PageMenuAction::DocProperties) => {
             app.dialog = Some(crate::Dialog::Properties(crate::PropsTab::Description));
+        }
+        Some(PageMenuAction::SharePage(page, target)) => {
+            crate::share::share_pages(app, &[page], target);
         }
         None => {}
     }

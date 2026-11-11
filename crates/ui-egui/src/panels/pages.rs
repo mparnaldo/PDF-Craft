@@ -202,6 +202,11 @@ pub(super) fn pages(
                     view.pending_action = Some(crate::canvas::ViewAction::Extract);
                     ui.close();
                 }
+                ui.menu_button(tl!("Compartilhar página(s)"), |ui| {
+                    crate::share::share_menu(ui, |target| {
+                        view.pending_action = Some(crate::canvas::ViewAction::ShareSelection(target));
+                    });
+                });
                 if ui.button(tl!("Split document…")).clicked() {
                     if view.selected.is_empty() {
                         view.select_pages(&[i]);

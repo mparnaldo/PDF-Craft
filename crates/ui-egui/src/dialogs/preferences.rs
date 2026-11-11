@@ -544,6 +544,13 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     });
     ui.add_space(12.0);
 
+    // Card 7: Reconhecimento de Texto (OCR)
+    let title7 = "Reconhecimento de Texto (OCR)";
+    preference_card(ui, t, title7, Some("scan-text"), &mut ctx, |ui, ctx| {
+        card_ocr(ui, app, t, ctx);
+    });
+    ui.add_space(12.0);
+
     if ctx.first_match_scrolled {
         ui.data_mut(|d| d.insert_temp(last_scrolled_id, query.clone()));
     } else if query.trim().is_empty() {
@@ -900,6 +907,55 @@ fn card_javascript(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &m
         ),
         t,
     );
+}
+
+/// Content for Card 7: Reconhecimento de Texto (OCR)
+fn card_ocr(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut PrefSearchContext) {
+    let d = &mut app.ocr_draft;
+    ui.horizontal(|ui| {
+        let label = ctx.label_primary(ui, "Idioma padrão do OCR", t);
+        craft_ui::ComboBox::from_id_salt("pref-ocr-default-lang")
+            .selected_text(match d.language.as_str() {
+                "pt" => "Português (Brasil)",
+                "en" => "English",
+                "es" => "Español",
+                "ja" => "Japanese",
+                other => other,
+            })
+            .width(180.0)
+            .show_ui(ui, |ui| {
+                for &(code, name) in crate::workflows::ocr_ui::UI_LANGUAGES {
+                    if ui.selectable_label(d.language == code, name).clicked() {
+                        d.language = code.to_string();
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .labelled_by(label.id);
+    });
+    ctx.label_secondary(ui, "Define o idioma padrão utilizado no reconhecimento de texto e pelo menu de contexto do Windows Explorer.", t);
+    ui.add_space(8.0);
+
+    ui.horizontal(|ui| {
+        ctx.label_primary(ui, "Salvamento padrão", t);
+        let mut overwrite = d.overwrite_original;
+        if ctx.pill_choice(ui, t, &mut overwrite, &[(false, "Criar novo arquivo (_ocr)"), (true, "Substituir arquivo original")]) {
+            d.overwrite_original = overwrite;
+        }
+    });
+    ctx.label_secondary(ui, "Escolha se o OCR gera um novo PDF pesquisável ou atualiza diretamente o arquivo existente.", t);
+    ui.add_space(8.0);
+
+    ctx.label_primary(ui, "Otimização e Pré-processamento automático", t);
+    ctx.checkbox(ui, &mut d.auto_rotate, "Girar páginas automaticamente (Auto-rotate)", t);
+    ctx.checkbox(ui, &mut d.deskew, "Alinhar e corrigir páginas inclinadas (Deskew)", t);
+    ctx.checkbox(ui, &mut d.denoise, "Remover ruídos e manchas de scanner (Denoise)", t);
+    ui.add_space(6.0);
+
+    ctx.label_primary(ui, "Processamento de documentos com texto existente", t);
+    ctx.checkbox(ui, &mut d.skip_text_pages, "Pular páginas que já contenham camada de texto pesquisável", t);
+    ctx.checkbox(ui, &mut d.force_ocr, "Forçar OCR em todas as páginas (substituir texto existente)", t);
 }
 
 /// Preferences dialog buttons: OK on the right. Returns true to close.

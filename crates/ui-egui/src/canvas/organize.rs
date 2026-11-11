@@ -424,6 +424,11 @@ pub(super) fn organize_grid(
                         view.pending_action = Some(ViewAction::Extract);
                         ui.close();
                     }
+                    ui.menu_button(tl!("Compartilhar página(s)"), |ui| {
+                        crate::share::share_menu(ui, |target| {
+                            view.pending_action = Some(ViewAction::ShareSelection(target));
+                        });
+                    });
                     if ui.button(tl!("Split document…")).clicked() {
                         view.pending_action = Some(ViewAction::SplitBeforeSelected);
                         ui.close();

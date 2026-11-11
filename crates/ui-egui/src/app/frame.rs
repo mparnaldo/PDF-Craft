@@ -26,9 +26,22 @@ impl PdfCraftApp {
                 system = desktop.get().map(|appearance| appearance == pdfcraft_platform::desktop_theme::DesktopAppearance::Dark);
             }
         }
+        if let Some(exec) = self.executive_theme {
+            let kind = exec.kind();
+            if kind != self.theme || theme::active_executive_theme() != exec {
+                self.theme = kind;
+                theme::apply_executive(ctx, exec);
+            }
+            return;
+        }
         let kind = self.theme_preference.resolve(system, ThemeKind::Light);
-        if kind != self.theme {
+        let classic = match kind {
+            ThemeKind::Light => theme::ExecutiveTheme::LightClassic,
+            ThemeKind::Dark => theme::ExecutiveTheme::DarkClassic,
+        };
+        if kind != self.theme || theme::active_executive_theme() != classic {
             self.theme = kind;
+            theme::set_active_executive_theme(classic);
             theme::apply(ctx, kind);
         }
     }

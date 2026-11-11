@@ -47,6 +47,10 @@ pub struct Preprocessed {
     /// on), or the source's own
     /// when it already rendered at 300 or more.
     pub dpi: f32,
+    /// Clockwise rotation in degrees (0, 90, 180, 270) applied by `auto_rotate`.
+    pub rotation_degrees: i64,
+    /// Skew angle in degrees corrected by `deskew`.
+    pub skew_degrees: f64,
 }
 
 /// Preprocess `image` (rendered at `source_dpi`) per `options`, in the fixed order. The image
@@ -55,6 +59,8 @@ pub struct Preprocessed {
 pub fn preprocess(image: OcrImage, source_dpi: f32, options: &PreprocessOptions) -> Result<Preprocessed, OcrError> {
     let mut current = image;
     let mut inverse = InverseTransform::identity();
+    let mut rotation_degrees = 0i64;
+    let mut skew_degrees = 0.0f64;
     // (a) DPI normalization: for the steps below, a scan under 300 dpi is enlarged by 300/src so
     // they see letter-sized strokes. With every step off nothing is resampled. A broken dpi
     // (zero, negative, NaN) is left alone.
@@ -70,6 +76,7 @@ pub fn preprocess(image: OcrImage, source_dpi: f32, options: &PreprocessOptions)
         let (w, h) = (current.width, current.height);
         let turns = detect_orientation(&current);
         if turns != 0 {
+            rotation_degrees = i64::from(turns) * 90;
             current = rotate_quarter_turns(&current, turns);
             inverse = compose(&inverse, &inverse_quarter_turns(turns, w, h));
         }
@@ -79,6 +86,7 @@ pub fn preprocess(image: OcrImage, source_dpi: f32, options: &PreprocessOptions)
     if options.deskew
         && let Some(angle) = estimate_skew(&current)
     {
+        skew_degrees = angle;
         let (straightened, back) = deskew_rotate(&current, angle);
         current = straightened;
         inverse = compose(&inverse, &back);
@@ -92,7 +100,7 @@ pub fn preprocess(image: OcrImage, source_dpi: f32, options: &PreprocessOptions)
     if options.binarize {
         current = sauvola(&current);
     }
-    Ok(Preprocessed { image: current, inverse_transform: inverse, dpi })
+    Ok(Preprocessed { image: current, inverse_transform: inverse, dpi, rotation_degrees, skew_degrees })
 }
 
 /// An affine map `(x, y) → (a·x + c·y + e, b·x + d·y + f)`, composed in f64 so mapping a
@@ -274,8 +282,10 @@ fn detect_orientation(image: &OcrImage) -> QuarterTurns {
             1
         } else if asyms[3] > 0.15 * total as f64 {
             3
+        } else if asyms[1] >= asyms[3] {
+            1
         } else {
-            0
+            3
         }
     }
 }

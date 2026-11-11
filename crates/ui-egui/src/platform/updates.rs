@@ -3,24 +3,61 @@
 //! `craft_update`'s `CheckResultDialog`.
 
 #[cfg(not(target_arch = "wasm32"))]
-use craft_update::updater::{Action, CheckSource, Status, Updater};
+use craft_update::CheckResultResponse;
 #[cfg(not(target_arch = "wasm32"))]
-use craft_update::{CheckResultDialog, CheckResultResponse};
+use craft_update::updater::{Action, CheckSource, Updater};
 
 use crate::PdfCraftApp;
 
 /// Where every PdfCraft release is listed.
 pub const RELEASES_PAGE: &str = "https://github.com/storytold/pdfcraft/releases";
 
+/// Returns `true` only when running on one of Marcos Pires's two development PCs
+/// (`server-sif` / `serversif` or `andsif00`). On any other PC, update checks are disabled.
+pub fn is_dev_machine() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        for var in ["COMPUTERNAME", "HOSTNAME", "USERNAME"] {
+            if let Ok(val) = std::env::var(var) {
+                let norm = val.trim().to_ascii_lowercase().replace('-', "");
+                if norm == "serversif" || norm == "andsif00" {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        false
+    }
+}
+
 /// Stands in for the network in tests.
 #[cfg(not(target_arch = "wasm32"))]
 pub type UpdateSource = CheckSource;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Arc, Mutex};
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Default)]
+pub(crate) struct UpstreamAuditState {
+    pub checking: bool,
+    pub latest_tag: Option<String>,
+    pub downloading: bool,
+    pub downloaded_dir: Option<String>,
+    pub status_log: String,
+}
 
 pub(crate) struct Updates {
     #[cfg(not(target_arch = "wasm32"))]
     updater: Updater,
     /// The Updates dialog is showing.
     pub(crate) open: bool,
+    /// Controlled upstream repository audit state.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) upstream_audit: Arc<Mutex<UpstreamAuditState>>,
     /// Ask for a newer release at start, unless Preferences says not to; the desktop app turns
     /// it on, so tests never reach the network.
     #[cfg(not(target_arch = "wasm32"))]
@@ -55,8 +92,10 @@ impl Default for Updates {
     fn default() -> Self {
         Self {
             #[cfg(not(target_arch = "wasm32"))]
-            updater: Updater::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION")),
+            updater: Updater::new(&crate::UPDATE_APP, "0.20.0"),
             open: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            upstream_audit: Arc::new(Mutex::new(UpstreamAuditState::default())),
             #[cfg(not(target_arch = "wasm32"))]
             startup_check: false,
             #[cfg(not(target_arch = "wasm32"))]
@@ -83,6 +122,7 @@ impl Updates {
     /// Draws the startup prompt and returns what it asks for. `can_start` is false while unsaved
     /// work holds back a ready update.
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     fn show_prompt(&mut self, ctx: &egui::Context, can_start: bool) -> Action {
         #[cfg(test)]
         if can_start && std::mem::take(&mut self.close_queued) {
@@ -93,6 +133,7 @@ impl Updates {
 
     /// Asks the next frame that may close to close the app, so that a ready update installs.
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     fn queue_close(&mut self) {
         self.updater.restart_to_update();
         #[cfg(test)]
@@ -104,30 +145,37 @@ impl Updates {
     /// Takes the close that a finished installation queued, so a save after Cancel does not close
     /// the app. `show_prompt` draws an open startup prompt, so this is for when none is open.
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     fn take_queued_close(&mut self, ctx: &egui::Context) {
         let _ = self.show_prompt(ctx, true);
     }
 }
 
 impl PdfCraftApp {
-    /// Whether the app asks for a newer release on its first frame (off until the desktop app turns it on).
+    /// Whether the app asks for a newer release on its first frame (restricted exclusively
+    /// to development machines `server-sif` and `andsif00` in controlled audit mode).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_startup_update_check(&mut self, on: bool) {
-        self.updates.startup_check = on;
+        self.updates.startup_check = on && is_dev_machine();
     }
 
     /// Replaces the network with `source` (tests).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_update_source(&mut self, source: UpdateSource) {
-        self.updates.updater = Updater::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION")).with_source(source);
+        self.updates.updater = Updater::new(&crate::UPDATE_APP, "0.20.0").with_source(source);
     }
 
-    /// Help ▸ Check for updates: ask for the latest release and show the outcome.
+    /// Help ▸ Check for updates: open the Controlled Upstream Update & Source Audit window
+    /// (restricted to `server-sif` and `andsif00`).
     pub fn check_for_updates(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if !is_dev_machine() && !cfg!(test) {
+                self.notify("As verificações de atualização estão restritas aos ambientes de desenvolvimento (server-sif / andsif00).");
+                return;
+            }
             self.updates.open = true;
-            self.updates.check_requested = true;
+            start_upstream_tag_check(&self.updates.upstream_audit, self.ctx.clone());
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -140,40 +188,247 @@ impl PdfCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let Some(ctx) = self.ctx.clone() else { return };
-            // Settled on the first frame: a preference turned on later waits for the next start.
-            let at_start = std::mem::take(&mut self.updates.startup_check) && self.update_check_at_start;
+            let _ = std::mem::take(&mut self.updates.startup_check);
             let updates = &mut self.updates;
             if std::mem::take(&mut updates.check_requested) {
                 updates.updater.check_now(&ctx);
-            } else if at_start {
-                updates.updater.check_at_start(&ctx);
             }
             updates.updater.tick(&ctx);
         }
     }
 }
 
-/// The startup prompt, and the Updates dialog that answers Help ▸ Check for updates.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_upstream_tag_check(state: &Arc<Mutex<UpstreamAuditState>>, ctx: Option<egui::Context>) {
+    if let Ok(mut s) = state.lock() {
+        if s.checking {
+            return;
+        }
+        s.checking = true;
+        s.status_log = "Consultando tags de versão no repositório oficial (github.com/storytold/pdfcraft)...".to_string();
+    }
+    let state = Arc::clone(state);
+    std::thread::spawn(move || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["ls-remote", "--tags", "--refs", "https://github.com/storytold/pdfcraft.git"]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = cmd.output();
+        let mut latest = "v0.20.0".to_string();
+        if let Ok(out) = output {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut best: Option<(String, (u64, u64, u64))> = None;
+            for line in text.lines() {
+                if let Some(tag_part) = line.split("refs/tags/").nth(1) {
+                    let tag = tag_part.trim();
+                    let clean = tag.trim_start_matches('v');
+                    let mut parts = clean.split('.');
+                    let major = parts.next().and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);
+                    let minor = parts.next().and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);
+                    let patch = parts.next().and_then(|p| p.split('-').next()).and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);
+                    let semver = (major, minor, patch);
+                    if best.as_ref().is_none_or(|(_, best_v)| semver > *best_v) {
+                        best = Some((tag.to_string(), semver));
+                    }
+                }
+            }
+            if let Some((best_tag, _)) = best {
+                latest = best_tag;
+            }
+        }
+        if let Ok(mut s) = state.lock() {
+            s.checking = false;
+            s.latest_tag = Some(latest.clone());
+            s.status_log = format!(
+                "Consulta concluída! Última versão oficial encontrada no GitHub: {latest}.\nVocê pode baixar o código-fonte dessa versão em uma pasta isolada para análise sem afetar sua versão customizada."
+            );
+        }
+        if let Some(ctx) = ctx {
+            ctx.request_repaint();
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_upstream_source_download(state: &Arc<Mutex<UpstreamAuditState>>, tag: String, ctx: Option<egui::Context>) {
+    if let Ok(mut s) = state.lock() {
+        if s.downloading {
+            return;
+        }
+        s.downloading = true;
+        s.status_log = format!("Baixando código-fonte oficial ({tag}) para pasta isolada de análise...");
+    }
+    let state = Arc::clone(state);
+    std::thread::spawn(move || {
+        let base_dir = std::path::PathBuf::from(r"E:\PROJETOS - SISTEMAS\PRJ-VISUAL STUDIO\PDF_CRAFT\upstream_releases");
+        let target_base = if base_dir.parent().is_some_and(|p| p.exists()) {
+            base_dir
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("upstream_releases")
+        };
+        let _ = std::fs::create_dir_all(&target_base);
+        let clean_tag = tag.trim_start_matches('v');
+        let folder_name = format!("pdfcraft-v{clean_tag}");
+        let dest = target_base.join(&folder_name);
+        if dest.exists() {
+            let _ = std::fs::remove_dir_all(&dest);
+        }
+        let dest_str = dest.to_string_lossy().into_owned();
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["clone", "--depth", "1", "--branch", &tag, "https://github.com/storytold/pdfcraft.git", &dest_str]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let status = cmd.output();
+        if let Ok(mut s) = state.lock() {
+            s.downloading = false;
+            match status {
+                Ok(out) if out.status.success() => {
+                    s.downloaded_dir = Some(dest_str.clone());
+                    s.status_log = format!(
+                        "✓ Código-fonte da versão {tag} baixado com sucesso em:\n{dest_str}\n\nAgora basta pedir no Antigravity para comparar essa pasta com a nossa distribuição e migrar apenas o que for interessante!"
+                    );
+                }
+                Ok(out) => {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    s.status_log = format!("✗ Falha ao clonar {tag}: {err}");
+                }
+                Err(e) => {
+                    s.status_log = format!("✗ Erro ao executar git clone: {e}");
+                }
+            }
+        }
+        if let Some(ctx) = ctx {
+            ctx.request_repaint();
+        }
+    });
+}
+
+/// The startup prompt, and the Controlled Upstream Update dialog that answers Help ▸ Check for updates.
 pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // The restart helper is scheduled before the app closes, so no update starts over unsaved work.
-        let clean = app.first_dirty().is_none();
-        match app.updates.show_prompt(ctx, clean) {
-            Action::None => {}
-            Action::OpenUrl(url) => app.open_url(&url),
-            Action::Close => {
-                app.request_quit(ctx);
-            }
+        if !app.updates.open {
+            return;
         }
-        // A requested check that found a release is answered by the prompt, not by this dialog.
-        if app.updates.open && !app.updates.check_requested && matches!(app.updates.updater.status(), Status::Idle) {
+        let t = crate::theme::Tokens::get(ctx);
+        let mut close_modal = false;
+        let mut trigger_check = false;
+        let mut trigger_download: Option<String> = None;
+        let mut open_folder: Option<String> = None;
+
+        let snapshot = app.updates.upstream_audit.lock().ok().map(|s| s.clone()).unwrap_or_default();
+
+        egui::Window::new("Central de Atualizações Controladas (PDF Craft)")
+            .id(egui::Id::unique("controlled_upstream_updates_window"))
+            .collapsible(false)
+            .resizable(false)
+            .fixed_size([580.0, 390.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                ui.horizontal(|ui| {
+                    crate::widgets::artcraft_mark(ui, 36.0);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("PDF Craft — Gestão Segura de Atualizações (Upstream)").font(crate::theme::semibold(16.0)));
+                        ui.label(egui::RichText::new("Sua versão customizada está protegida contra sobrescrita automática.").small().color(t.text_muted));
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::icons::button(ui, "x", 26.0, false, "Fechar").clicked() {
+                            close_modal = true;
+                        }
+                    });
+                });
+                ui.separator();
+
+                egui::Frame::new()
+                    .fill(t.hover)
+                    .stroke(egui::Stroke::new(1.0, t.border))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::symmetric(12, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(egui::RichText::new("📦 Versão Instalada (Sua Distribuição Customizada): v0.20.0 (Build 20261111.10)").strong());
+                        let upstream_label = snapshot.latest_tag.as_deref().unwrap_or(if snapshot.checking { "Verificando..." } else { "v0.20.0" });
+                        ui.label(egui::RichText::new(format!("🌐 Última Versão no Repositório Oficial (storytold/pdfcraft): {upstream_label}")).strong());
+                        ui.label(egui::RichText::new("🖥 Estação Autorizada: server-sif / andsif00 (Desenvolvimento — Marcos Pires)").small().color(t.accent_text));
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "🛡 Por segurança, as atualizações do repositório oficial NÃO são instaladas por cima do seu executável (pois apagariam o Compartilhamento WhatsApp/Outlook, OCR em Lote, Menu no Topo e Painéis de Impressão).",
+                            )
+                            .small()
+                            .color(t.text_muted),
+                        );
+                    });
+
+                if snapshot.checking || snapshot.downloading {
+                    ui.add(egui::ProgressBar::new(0.65).text(if snapshot.downloading { "Baixando código-fonte oficial em pasta isolada..." } else { "Consultando GitHub..." }).animate(true));
+                }
+
+                ui.label(egui::RichText::new("📋 Status e Auditoria de Código-Fonte:").small().strong());
+                egui::Frame::new()
+                    .fill(egui::Color32::from_black_alpha(22))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical().max_height(95.0).show(ui, |ui| {
+                            ui.monospace(if snapshot.status_log.is_empty() {
+                                "Pronto para verificar ou baixar o código-fonte oficial para análise."
+                            } else {
+                                &snapshot.status_log
+                            });
+                        });
+                    });
+
+                ui.add_space(4.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(!snapshot.checking && !snapshot.downloading, egui::Button::new("🔄 Verificar Novamente")).clicked() {
+                        trigger_check = true;
+                    }
+                    let tag_to_dl = snapshot.latest_tag.clone().unwrap_or_else(|| "v0.20.0".to_string());
+                    if ui
+                        .add_enabled(
+                            !snapshot.checking && !snapshot.downloading,
+                            egui::Button::new(format!("📥 Baixar Código-Fonte ({tag_to_dl}) na Pasta do Projeto")),
+                        )
+                        .clicked()
+                    {
+                        trigger_download = Some(tag_to_dl);
+                    }
+                    if let Some(ref dir) = snapshot.downloaded_dir
+                        && ui.button("📂 Abrir Pasta Baixada").clicked()
+                    {
+                        open_folder = Some(dir.clone());
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::widgets::pill_button(ui, "Fechar", true).clicked() {
+                            close_modal = true;
+                        }
+                    });
+                });
+            });
+
+        if trigger_check {
+            start_upstream_tag_check(&app.updates.upstream_audit, Some(ctx.clone()));
+        }
+        if let Some(tag) = trigger_download {
+            start_upstream_source_download(&app.updates.upstream_audit, tag, Some(ctx.clone()));
+        }
+        if let Some(folder) = open_folder {
+            let _ = std::process::Command::new("explorer.exe").arg(folder).spawn();
+        }
+        if close_modal {
             app.updates.open = false;
-        }
-        if app.updates.open {
-            let dialog = CheckResultDialog::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION"));
-            let response = dialog.show(ctx, app.updates.updater.status());
-            answer_result(app, ctx, response);
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -182,6 +437,7 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
 
 /// Carries out the answer to the Updates dialog.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn answer_result(app: &mut PdfCraftApp, ctx: &egui::Context, response: CheckResultResponse) {
     match response {
         CheckResultResponse::None => {}
@@ -198,6 +454,7 @@ fn answer_result(app: &mut PdfCraftApp, ctx: &egui::Context, response: CheckResu
 /// them; Cancel there leaves the update ready. An open startup prompt keeps its own Restart to
 /// Update and save-first note, so the app stays open.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn restart_to_update(app: &mut PdfCraftApp, ctx: &egui::Context) {
     if app.first_dirty().is_none() {
         app.updates.queue_close();
@@ -217,6 +474,7 @@ mod tests {
     use super::*;
     use crate::CloseRequest;
     use crate::editing::SaveTarget;
+    use craft_update::updater::Status;
     use eframe::App as _;
     use pdfcraft_engine::{Edit, FieldValue};
     use std::path::PathBuf;

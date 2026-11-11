@@ -333,9 +333,16 @@ impl PdfCraftApp {
         self.pick_files(FilePurpose::CreateMultipleSeparate, true);
     }
 
-    /// Scan & OCR ▸ Recognize text ▸ In multiple files: ask for the PDFs.
+    /// Scan & OCR ▸ Recognize text ▸ In multiple files: open the Recognize Text dialog in batch mode
+    /// (or use the file picker directly when `pick_override` is set in automated tests).
     pub fn ocr_files_dialog(&mut self) {
-        self.pick_files(FilePurpose::Ocr, true);
+        if self.pick_override.is_some() {
+            self.pick_files(FilePurpose::Ocr, true);
+        } else {
+            self.ocr_draft.batch_mode = true;
+            self.ocr_draft.overwrite_original = true;
+            self.dialog = Some(crate::Dialog::RecognizeText);
+        }
     }
 
     /// Ask for files whose pages to insert after the selection (Organize ▸ Insert from file).
@@ -389,6 +396,10 @@ impl PdfCraftApp {
     /// Read the picked files and use them.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn use_paths(&mut self, purpose: FilePurpose, paths: &[std::path::PathBuf]) {
+        if purpose == FilePurpose::Ocr && self.dialog == Some(crate::Dialog::RecognizeText) {
+            self.add_ocr_batch_paths(paths);
+            return;
+        }
         if purpose == FilePurpose::CreateMultiple {
             // Each file is read when its turn comes, so the selection's bytes are not all held at once.
             if !paths.is_empty() {

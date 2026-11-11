@@ -13,6 +13,138 @@ pub enum ThemeKind {
     Dark,
 }
 
+/// Executive minimalist themes available in the dedicated Theme Gallery ("Mais Temas…").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum ExecutiveTheme {
+    #[default]
+    LightClassic,
+    DarkClassic,
+    NordicIce,
+    WarmPaper,
+    PearlSilver,
+    ExecutiveSlate,
+    MidnightNavy,
+    CarbonEmerald,
+}
+
+pub const ALL_EXECUTIVE_THEMES: &[ExecutiveTheme] = &[
+    ExecutiveTheme::LightClassic,
+    ExecutiveTheme::DarkClassic,
+    ExecutiveTheme::NordicIce,
+    ExecutiveTheme::WarmPaper,
+    ExecutiveTheme::PearlSilver,
+    ExecutiveTheme::ExecutiveSlate,
+    ExecutiveTheme::MidnightNavy,
+    ExecutiveTheme::CarbonEmerald,
+];
+
+static ACTIVE_EXEC_THEME: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+impl ExecutiveTheme {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::DarkClassic,
+            2 => Self::NordicIce,
+            3 => Self::WarmPaper,
+            4 => Self::PearlSilver,
+            5 => Self::ExecutiveSlate,
+            6 => Self::MidnightNavy,
+            7 => Self::CarbonEmerald,
+            _ => Self::LightClassic,
+        }
+    }
+
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::LightClassic => 0,
+            Self::DarkClassic => 1,
+            Self::NordicIce => 2,
+            Self::WarmPaper => 3,
+            Self::PearlSilver => 4,
+            Self::ExecutiveSlate => 5,
+            Self::MidnightNavy => 6,
+            Self::CarbonEmerald => 7,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::LightClassic => "light_classic",
+            Self::DarkClassic => 1_u8.to_theme_id(),
+            Self::NordicIce => "nordic_ice",
+            Self::WarmPaper => "warm_paper",
+            Self::PearlSilver => "pearl_silver",
+            Self::ExecutiveSlate => "executive_slate",
+            Self::MidnightNavy => "midnight_navy",
+            Self::CarbonEmerald => "carbon_emerald",
+        }
+    }
+
+    pub fn from_id(s: &str) -> Option<Self> {
+        match s.trim() {
+            "light_classic" => Some(Self::LightClassic),
+            "dark_classic" => Some(Self::DarkClassic),
+            "nordic_ice" => Some(Self::NordicIce),
+            "warm_paper" => Some(Self::WarmPaper),
+            "pearl_silver" => Some(Self::PearlSilver),
+            "executive_slate" => Some(Self::ExecutiveSlate),
+            "midnight_navy" => Some(Self::MidnightNavy),
+            "carbon_emerald" => Some(Self::CarbonEmerald),
+            _ => None,
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::LightClassic => "Claro Clássico (Barra Chumbo)",
+            Self::DarkClassic => "Escuro Clássico (Dark Gray)",
+            Self::NordicIce => "Gelo Nórdico (Nordic Ice)",
+            Self::WarmPaper => "Papiro Executivo (Leitura Suave)",
+            Self::PearlSilver => "Prata Corporativo (Platinum)",
+            Self::ExecutiveSlate => "Ardósia Executivo (Slate Dark)",
+            Self::MidnightNavy => "Azul Meia-Noite (Midnight Blue)",
+            Self::CarbonEmerald => "Grafite & Esmeralda (Studio)",
+        }
+    }
+
+    pub fn subtitle(self) -> &'static str {
+        match self {
+            Self::LightClassic => "Painéis claros com barra superior inteira em chumbo escuro de alto contraste",
+            Self::DarkClassic => "Visual escuro neutro com barra superior em grafite profundo",
+            Self::NordicIce => "Minimalista frio em tons branco-gelo e barra superior azul-ardósia",
+            Self::WarmPaper => "Conforto visual sépia/creme para leitura prolongada com barra café escuro",
+            Self::PearlSilver => "Cinza platina corporativo com destaque índigo e barra chumbo metálico",
+            Self::ExecutiveSlate => "Escuro executivo azul-ardósia com destaques em ciano celeste",
+            Self::MidnightNavy => "Marinho profundo minimalista com destaques em azul safira",
+            Self::CarbonEmerald => "Estúdio carbono neutro com acentos em verde esmeralda",
+        }
+    }
+
+    pub fn kind(self) -> ThemeKind {
+        match self {
+            Self::LightClassic | Self::NordicIce | Self::WarmPaper | Self::PearlSilver => ThemeKind::Light,
+            Self::DarkClassic | Self::ExecutiveSlate | Self::MidnightNavy | Self::CarbonEmerald => ThemeKind::Dark,
+        }
+    }
+}
+
+trait ThemeIdHelper {
+    fn to_theme_id(self) -> &'static str;
+}
+impl ThemeIdHelper for u8 {
+    fn to_theme_id(self) -> &'static str {
+        "dark_classic"
+    }
+}
+
+pub fn active_executive_theme() -> ExecutiveTheme {
+    ExecutiveTheme::from_u8(ACTIVE_EXEC_THEME.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+pub fn set_active_executive_theme(theme: ExecutiveTheme) {
+    ACTIVE_EXEC_THEME.store(theme.to_u8(), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The saved user choice, independent of the light/dark colours currently displayed. A fresh
 /// install follows the system (#1248); a desktop that says nothing gets Light.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -70,8 +202,21 @@ pub struct Tokens {
 
 impl Tokens {
     pub fn for_kind(kind: ThemeKind) -> Self {
-        match kind {
-            ThemeKind::Light => Self {
+        let exec = active_executive_theme();
+        if exec.kind() == kind {
+            Self::for_executive(exec)
+        } else {
+            match kind {
+                ThemeKind::Light => Self::for_executive(ExecutiveTheme::LightClassic),
+                ThemeKind::Dark => Self::for_executive(ExecutiveTheme::DarkClassic),
+            }
+        }
+    }
+
+    pub fn for_executive(theme: ExecutiveTheme) -> Self {
+        let kind = theme.kind();
+        match theme {
+            ExecutiveTheme::LightClassic => Self {
                 kind,
                 titlebar: Color32::from_rgb(0xE9, 0xE9, 0xEB),
                 chrome: Color32::from_rgb(0xFF, 0xFF, 0xFF),
@@ -95,7 +240,7 @@ impl Tokens {
                 page_shadow: Color32::from_black_alpha(34),
                 radius: 6,
             },
-            ThemeKind::Dark => Self {
+            ExecutiveTheme::DarkClassic => Self {
                 kind,
                 titlebar: Color32::from_rgb(0x1B, 0x1B, 0x1E),
                 chrome: Color32::from_rgb(0x26, 0x26, 0x2A),
@@ -118,6 +263,285 @@ impl Tokens {
                 badge_new: Color32::from_rgb(0x3D, 0x7D, 0xEE),
                 page_shadow: Color32::from_black_alpha(120),
                 radius: 6,
+            },
+            ExecutiveTheme::NordicIce => Self {
+                kind,
+                titlebar: Color32::from_rgb(0xE2, 0xE8, 0xF0),
+                chrome: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+                panel: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+                pasteboard: Color32::from_rgb(0xEA, 0xF0, 0xF6),
+                card: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+                border: Color32::from_rgb(0xCB, 0xD5, 0xE1),
+                divider: Color32::from_rgb(0xE2, 0xE8, 0xF0),
+                text: Color32::from_rgb(0x0F, 0x17, 0x2A),
+                text_muted: Color32::from_rgb(0x47, 0x55, 0x69),
+                text_faint: Color32::from_rgb(0x64, 0x74, 0x8B),
+                icon: Color32::from_rgb(0x33, 0x41, 0x55),
+                hover: Color32::from_rgb(0xE2, 0xE8, 0xF0),
+                pressed: Color32::from_rgb(0xCB, 0xD5, 0xE1),
+                selected: Color32::from_rgb(0xE0, 0xF2, 0xFE),
+                accent: Color32::from_rgb(0x02, 0x84, 0xC7),
+                accent_text: Color32::from_rgb(0x03, 0x69, 0xA1),
+                accent_soft: Color32::from_rgb(0xE0, 0xF2, 0xFE),
+                field: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+                badge_new: Color32::from_rgb(0x02, 0x84, 0xC7),
+                page_shadow: Color32::from_black_alpha(36),
+                radius: 6,
+            },
+            ExecutiveTheme::WarmPaper => Self {
+                kind,
+                titlebar: Color32::from_rgb(0xE6, 0xE0, 0xD6),
+                chrome: Color32::from_rgb(0xFA, 0xF7, 0xF2),
+                panel: Color32::from_rgb(0xFA, 0xF7, 0xF2),
+                pasteboard: Color32::from_rgb(0xEF, 0xEB, 0xE1),
+                card: Color32::from_rgb(0xFD, 0xFB, 0xF7),
+                border: Color32::from_rgb(0xD6, 0xCE, 0xC2),
+                divider: Color32::from_rgb(0xE5, 0xDE, 0xD3),
+                text: Color32::from_rgb(0x29, 0x25, 0x24),
+                text_muted: Color32::from_rgb(0x57, 0x53, 0x4E),
+                text_faint: Color32::from_rgb(0x78, 0x71, 0x6C),
+                icon: Color32::from_rgb(0x44, 0x40, 0x3C),
+                hover: Color32::from_rgb(0xEE, 0xE8, 0xDF),
+                pressed: Color32::from_rgb(0xE2, 0xDA, 0xCE),
+                selected: Color32::from_rgb(0xFE, 0xF3, 0xC7),
+                accent: Color32::from_rgb(0xB4, 0x53, 0x09),
+                accent_text: Color32::from_rgb(0x92, 0x40, 0x0E),
+                accent_soft: Color32::from_rgb(0xFD, 0xE6, 0x8A),
+                field: Color32::from_rgb(0xFF, 0xFD, 0xF9),
+                badge_new: Color32::from_rgb(0xB4, 0x53, 0x09),
+                page_shadow: Color32::from_black_alpha(38),
+                radius: 6,
+            },
+            ExecutiveTheme::PearlSilver => Self {
+                kind,
+                titlebar: Color32::from_rgb(0xDF, 0xDF, 0xE4),
+                chrome: Color32::from_rgb(0xF4, 0xF4, 0xF7),
+                panel: Color32::from_rgb(0xF4, 0xF4, 0xF7),
+                pasteboard: Color32::from_rgb(0xE6, 0xE6, 0xEB),
+                card: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+                border: Color32::from_rgb(0xD1, 0xD1, 0xD8),
+                divider: Color32::from_rgb(0xE0, 0xE0, 0xE6),
+                text: Color32::from_rgb(0x18, 0x18, 0x1B),
+                text_muted: Color32::from_rgb(0x52, 0x52, 0x5B),
+                text_faint: Color32::from_rgb(0x71, 0x71, 0x7A),
+                icon: Color32::from_rgb(0x3F, 0x3F, 0x46),
+                hover: Color32::from_rgb(0xE8, 0xE8, 0xEE),
+                pressed: Color32::from_rgb(0xDC, 0xDC, 0xE4),
+                selected: Color32::from_rgb(0xE0, 0xE7, 0xFF),
+                accent: Color32::from_rgb(0x4F, 0x46, 0xE5),
+                accent_text: Color32::from_rgb(0x43, 0x38, 0xCA),
+                accent_soft: Color32::from_rgb(0xE0, 0xE7, 0xFF),
+                field: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+                badge_new: Color32::from_rgb(0x4F, 0x46, 0xE5),
+                page_shadow: Color32::from_black_alpha(38),
+                radius: 6,
+            },
+            ExecutiveTheme::ExecutiveSlate => Self {
+                kind,
+                titlebar: Color32::from_rgb(0x0F, 0x17, 0x2A),
+                chrome: Color32::from_rgb(0x1E, 0x29, 0x3B),
+                panel: Color32::from_rgb(0x1E, 0x29, 0x3B),
+                pasteboard: Color32::from_rgb(0x11, 0x18, 0x27),
+                card: Color32::from_rgb(0x26, 0x33, 0x49),
+                border: Color32::from_rgb(0x33, 0x41, 0x55),
+                divider: Color32::from_rgb(0x29, 0x35, 0x48),
+                text: Color32::from_rgb(0xF1, 0xF5, 0xF9),
+                text_muted: Color32::from_rgb(0x94, 0xA3, 0xB8),
+                text_faint: Color32::from_rgb(0x64, 0x74, 0x8B),
+                icon: Color32::from_rgb(0xCB, 0xD5, 0xE1),
+                hover: Color32::from_rgb(0x2D, 0x3B, 0x52),
+                pressed: Color32::from_rgb(0x38, 0x48, 0x62),
+                selected: Color32::from_rgb(0x0C, 0x4A, 0x6E),
+                accent: Color32::from_rgb(0x38, 0xBD, 0xF8),
+                accent_text: Color32::from_rgb(0x7D, 0xD3, 0xFC),
+                accent_soft: Color32::from_rgb(0x0F, 0x3D, 0x5E),
+                field: Color32::from_rgb(0x15, 0x1E, 0x2E),
+                badge_new: Color32::from_rgb(0x02, 0x84, 0xC7),
+                page_shadow: Color32::from_black_alpha(130),
+                radius: 6,
+            },
+            ExecutiveTheme::MidnightNavy => Self {
+                kind,
+                titlebar: Color32::from_rgb(0x0B, 0x11, 0x1E),
+                chrome: Color32::from_rgb(0x15, 0x1E, 0x32),
+                panel: Color32::from_rgb(0x15, 0x1E, 0x32),
+                pasteboard: Color32::from_rgb(0x0D, 0x13, 0x22),
+                card: Color32::from_rgb(0x1D, 0x28, 0x42),
+                border: Color32::from_rgb(0x2B, 0x39, 0x5B),
+                divider: Color32::from_rgb(0x22, 0x2E, 0x4A),
+                text: Color32::from_rgb(0xEC, 0xF2, 0xFF),
+                text_muted: Color32::from_rgb(0x9C, 0xAD, 0xCE),
+                text_faint: Color32::from_rgb(0x74, 0x86, 0xAC),
+                icon: Color32::from_rgb(0xC7, 0xD5, 0xF0),
+                hover: Color32::from_rgb(0x23, 0x30, 0x4E),
+                pressed: Color32::from_rgb(0x2C, 0x3C, 0x60),
+                selected: Color32::from_rgb(0x1E, 0x3A, 0x8A),
+                accent: Color32::from_rgb(0x60, 0xA5, 0xFA),
+                accent_text: Color32::from_rgb(0x93, 0xC5, 0xFD),
+                accent_soft: Color32::from_rgb(0x1E, 0x33, 0x6A),
+                field: Color32::from_rgb(0x10, 0x17, 0x28),
+                badge_new: Color32::from_rgb(0x3B, 0x82, 0xF6),
+                page_shadow: Color32::from_black_alpha(135),
+                radius: 6,
+            },
+            ExecutiveTheme::CarbonEmerald => Self {
+                kind,
+                titlebar: Color32::from_rgb(0x12, 0x16, 0x14),
+                chrome: Color32::from_rgb(0x1E, 0x24, 0x21),
+                panel: Color32::from_rgb(0x1E, 0x24, 0x21),
+                pasteboard: Color32::from_rgb(0x14, 0x18, 0x16),
+                card: Color32::from_rgb(0x26, 0x2E, 0x2A),
+                border: Color32::from_rgb(0x35, 0x40, 0x3A),
+                divider: Color32::from_rgb(0x2C, 0x35, 0x30),
+                text: Color32::from_rgb(0xEC, 0xF3, 0xEF),
+                text_muted: Color32::from_rgb(0xA3, 0xB5, 0xAB),
+                text_faint: Color32::from_rgb(0x7B, 0x8F, 0x84),
+                icon: Color32::from_rgb(0xCE, 0xDD, 0xD5),
+                hover: Color32::from_rgb(0x2B, 0x34, 0x2F),
+                pressed: Color32::from_rgb(0x35, 0x41, 0x3B),
+                selected: Color32::from_rgb(0x06, 0x4E, 0x3B),
+                accent: Color32::from_rgb(0x10, 0xB9, 0x81),
+                accent_text: Color32::from_rgb(0x6E, 0xE7, 0xB7),
+                accent_soft: Color32::from_rgb(0x09, 0x3D, 0x2E),
+                field: Color32::from_rgb(0x16, 0x1B, 0x18),
+                badge_new: Color32::from_rgb(0x05, 0x96, 0x69),
+                page_shadow: Color32::from_black_alpha(130),
+                radius: 6,
+            },
+        }
+    }
+
+    /// Return the contrasting full-width Menu Bar tokens (from the extreme left edge to the
+    /// extreme right edge of the window) for the current theme.
+    pub fn for_menubar(&self) -> Self {
+        let exec = active_executive_theme();
+        let active = if exec.kind() == self.kind {
+            exec
+        } else if self.kind == ThemeKind::Light {
+            ExecutiveTheme::LightClassic
+        } else {
+            ExecutiveTheme::DarkClassic
+        };
+        match active {
+            ExecutiveTheme::LightClassic => Self {
+                chrome: Color32::from_rgb(0x2C, 0x30, 0x38), // Chumbo Executivo
+                panel: Color32::from_rgb(0x2C, 0x30, 0x38),
+                text: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+                text_muted: Color32::from_rgb(0xCB, 0xD5, 0xE1),
+                text_faint: Color32::from_rgb(0x94, 0xA3, 0xB8),
+                icon: Color32::from_rgb(0xE2, 0xE8, 0xF0),
+                hover: Color32::from_rgb(0x3D, 0x43, 0x4F),
+                pressed: Color32::from_rgb(0x4B, 0x52, 0x62),
+                field: Color32::from_rgb(0x1E, 0x22, 0x29),
+                border: Color32::from_rgb(0x47, 0x4E, 0x5C),
+                divider: Color32::from_rgb(0x1E, 0x20, 0x26),
+                accent: Color32::from_rgb(0x60, 0xA5, 0xFA),
+                accent_text: Color32::from_rgb(0x93, 0xC5, 0xFD),
+                ..*self
+            },
+            ExecutiveTheme::DarkClassic => Self {
+                chrome: Color32::from_rgb(0x14, 0x15, 0x18), // Grafite Ônix
+                panel: Color32::from_rgb(0x14, 0x15, 0x18),
+                text: Color32::from_rgb(0xF3, 0xF4, 0xF6),
+                text_muted: Color32::from_rgb(0xB8, 0xBC, 0xC6),
+                text_faint: Color32::from_rgb(0x8E, 0x93, 0xA0),
+                icon: Color32::from_rgb(0xDF, 0xE2, 0xEA),
+                hover: Color32::from_rgb(0x25, 0x27, 0x2E),
+                pressed: Color32::from_rgb(0x31, 0x34, 0x3D),
+                field: Color32::from_rgb(0x0D, 0x0E, 0x11),
+                border: Color32::from_rgb(0x2E, 0x31, 0x3A),
+                divider: Color32::from_rgb(0x0B, 0x0C, 0x0E),
+                ..*self
+            },
+            ExecutiveTheme::NordicIce => Self {
+                chrome: Color32::from_rgb(0x1E, 0x29, 0x3B), // Ardósia Escura
+                panel: Color32::from_rgb(0x1E, 0x29, 0x3B),
+                text: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+                text_muted: Color32::from_rgb(0xCB, 0xD5, 0xE1),
+                text_faint: Color32::from_rgb(0x94, 0xA3, 0xB8),
+                icon: Color32::from_rgb(0xE2, 0xE8, 0xF0),
+                hover: Color32::from_rgb(0x33, 0x41, 0x55),
+                pressed: Color32::from_rgb(0x47, 0x55, 0x69),
+                field: Color32::from_rgb(0x0F, 0x17, 0x2A),
+                border: Color32::from_rgb(0x47, 0x55, 0x69),
+                divider: Color32::from_rgb(0x0F, 0x17, 0x2A),
+                accent: Color32::from_rgb(0x38, 0xBD, 0xF8),
+                accent_text: Color32::from_rgb(0x7D, 0xD3, 0xFC),
+                ..*self
+            },
+            ExecutiveTheme::WarmPaper => Self {
+                chrome: Color32::from_rgb(0x2C, 0x25, 0x20), // Café Espresso / Bronze
+                panel: Color32::from_rgb(0x2C, 0x25, 0x20),
+                text: Color32::from_rgb(0xFA, 0xF7, 0xF2),
+                text_muted: Color32::from_rgb(0xD6, 0xCE, 0xC2),
+                text_faint: Color32::from_rgb(0xA8, 0x9F, 0x91),
+                icon: Color32::from_rgb(0xEB, 0xE4, 0xDA),
+                hover: Color32::from_rgb(0x3F, 0x36, 0x2F),
+                pressed: Color32::from_rgb(0x52, 0x46, 0x3D),
+                field: Color32::from_rgb(0x1C, 0x17, 0x14),
+                border: Color32::from_rgb(0x4E, 0x43, 0x3A),
+                divider: Color32::from_rgb(0x1C, 0x17, 0x14),
+                accent: Color32::from_rgb(0xF5, 0x9E, 0x0B),
+                accent_text: Color32::from_rgb(0xFB, 0xBF, 0x24),
+                ..*self
+            },
+            ExecutiveTheme::PearlSilver => Self {
+                chrome: Color32::from_rgb(0x27, 0x27, 0x2A), // Chumbo Metálico
+                panel: Color32::from_rgb(0x27, 0x27, 0x2A),
+                text: Color32::from_rgb(0xFA, 0xFA, 0xFA),
+                text_muted: Color32::from_rgb(0xD4, 0xD4, 0xD8),
+                text_faint: Color32::from_rgb(0xA1, 0xA1, 0xAA),
+                icon: Color32::from_rgb(0xE4, 0xE4, 0xE7),
+                hover: Color32::from_rgb(0x3F, 0x3F, 0x46),
+                pressed: Color32::from_rgb(0x52, 0x52, 0x5B),
+                field: Color32::from_rgb(0x18, 0x18, 0x1B),
+                border: Color32::from_rgb(0x52, 0x52, 0x5B),
+                divider: Color32::from_rgb(0x18, 0x18, 0x1B),
+                accent: Color32::from_rgb(0x81, 0x8C, 0xF8),
+                accent_text: Color32::from_rgb(0xA5, 0xB4, 0xFC),
+                ..*self
+            },
+            ExecutiveTheme::ExecutiveSlate => Self {
+                chrome: Color32::from_rgb(0x0B, 0x11, 0x1E), // Ônix Azul
+                panel: Color32::from_rgb(0x0B, 0x11, 0x1E),
+                text: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+                text_muted: Color32::from_rgb(0xCB, 0xD5, 0xE1),
+                text_faint: Color32::from_rgb(0x94, 0xA3, 0xB8),
+                icon: Color32::from_rgb(0xE2, 0xE8, 0xF0),
+                hover: Color32::from_rgb(0x1E, 0x29, 0x3B),
+                pressed: Color32::from_rgb(0x33, 0x41, 0x55),
+                field: Color32::from_rgb(0x06, 0x0A, 0x12),
+                border: Color32::from_rgb(0x28, 0x35, 0x48),
+                divider: Color32::from_rgb(0x06, 0x0A, 0x12),
+                ..*self
+            },
+            ExecutiveTheme::MidnightNavy => Self {
+                chrome: Color32::from_rgb(0x07, 0x0B, 0x14), // Abismo Marinho
+                panel: Color32::from_rgb(0x07, 0x0B, 0x14),
+                text: Color32::from_rgb(0xF0, 0xF6, 0xFF),
+                text_muted: Color32::from_rgb(0xB8, 0xC7, 0xE6),
+                text_faint: Color32::from_rgb(0x85, 0x99, 0xC2),
+                icon: Color32::from_rgb(0xDA, 0xE4, 0xFA),
+                hover: Color32::from_rgb(0x16, 0x20, 0x38),
+                pressed: Color32::from_rgb(0x22, 0x31, 0x52),
+                field: Color32::from_rgb(0x04, 0x07, 0x0D),
+                border: Color32::from_rgb(0x22, 0x30, 0x4F),
+                divider: Color32::from_rgb(0x04, 0x07, 0x0D),
+                ..*self
+            },
+            ExecutiveTheme::CarbonEmerald => Self {
+                chrome: Color32::from_rgb(0x0C, 0x10, 0x0E), // Carvão Puro
+                panel: Color32::from_rgb(0x0C, 0x10, 0x0E),
+                text: Color32::from_rgb(0xF0, 0xF7, 0xF4),
+                text_muted: Color32::from_rgb(0xBD, 0xD1, 0xC6),
+                text_faint: Color32::from_rgb(0x8A, 0xA3, 0x96),
+                icon: Color32::from_rgb(0xDC, 0xEB, 0xE2),
+                hover: Color32::from_rgb(0x1C, 0x24, 0x20),
+                pressed: Color32::from_rgb(0x28, 0x33, 0x2D),
+                field: Color32::from_rgb(0x07, 0x09, 0x08),
+                border: Color32::from_rgb(0x26, 0x30, 0x2B),
+                divider: Color32::from_rgb(0x07, 0x09, 0x08),
+                ..*self
             },
         }
     }
@@ -420,6 +844,12 @@ pub fn medium(size: f32) -> FontId {
 }
 pub fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("semibold".into()))
+}
+
+/// Install the palette, widget styling, text sizes and right-to-left flag for an executive theme.
+pub fn apply_executive(ctx: &egui::Context, exec: ExecutiveTheme) {
+    set_active_executive_theme(exec);
+    apply(ctx, exec.kind());
 }
 
 /// Install the palette, widget styling, text sizes and right-to-left flag for the chosen theme.

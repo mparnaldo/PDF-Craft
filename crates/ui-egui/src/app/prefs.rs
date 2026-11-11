@@ -40,12 +40,45 @@ impl PdfCraftApp {
     /// Sets the user's interface theme preference (Light, Dark, or System).
     pub fn set_theme_preference(&mut self, preference: ThemePreference) {
         self.theme_preference = preference;
+        self.executive_theme = None;
         if let Some(ctx) = self.ctx.clone() {
             self.sync_theme(&ctx);
+            let classic = match self.theme {
+                ThemeKind::Light => theme::ExecutiveTheme::LightClassic,
+                ThemeKind::Dark => theme::ExecutiveTheme::DarkClassic,
+            };
+            theme::set_active_executive_theme(classic);
             theme::apply(&ctx, self.theme);
         } else {
             self.theme = preference.resolve(None, ThemeKind::Light);
+            let classic = match self.theme {
+                ThemeKind::Light => theme::ExecutiveTheme::LightClassic,
+                ThemeKind::Dark => theme::ExecutiveTheme::DarkClassic,
+            };
+            theme::set_active_executive_theme(classic);
         }
+    }
+
+    /// Sets a specific executive theme from the Theme Gallery.
+    pub fn set_executive_theme(&mut self, exec: theme::ExecutiveTheme) {
+        self.executive_theme = Some(exec);
+        self.theme = exec.kind();
+        self.theme_preference = match exec.kind() {
+            ThemeKind::Light => ThemePreference::Light,
+            ThemeKind::Dark => ThemePreference::Dark,
+        };
+        theme::set_active_executive_theme(exec);
+        if let Some(ctx) = self.ctx.clone() {
+            theme::apply_executive(&ctx, exec);
+        }
+    }
+
+    /// Returns the currently active executive theme.
+    pub fn current_executive_theme(&self) -> theme::ExecutiveTheme {
+        self.executive_theme.unwrap_or(match self.theme {
+            ThemeKind::Light => theme::ExecutiveTheme::LightClassic,
+            ThemeKind::Dark => theme::ExecutiveTheme::DarkClassic,
+        })
     }
 
     /// The app-wide reading-colours preference: sets it and applies it to every open document,
@@ -180,6 +213,9 @@ impl PdfCraftApp {
         // The Print dialog's own paper sizes (print.page-setup).
         v["print_custom_papers"] = serde_json::json!(self.print_draft.custom_papers);
         v["show_page_edge_shadows"] = self.show_page_edge_shadows.into();
+        if let Some(exec) = self.executive_theme {
+            v["executive_theme"] = serde_json::json!(exec);
+        }
         // Not `check_updates_at_start`: that key was an opt-in of its own, off unless chosen, and
         // settings written then would turn this off unasked.
         v["update_check_at_start"] = self.update_check_at_start.into();
@@ -290,6 +326,9 @@ impl PdfCraftApp {
         }
         if let Ok(preference) = serde_json::from_value::<ThemePreference>(v["theme"].clone()) {
             self.set_theme_preference(preference);
+        }
+        if let Ok(exec) = serde_json::from_value::<theme::ExecutiveTheme>(v["executive_theme"].clone()) {
+            self.set_executive_theme(exec);
         }
         if let Ok(speed) = serde_json::from_value::<scroll_speed::ScrollSpeed>(v["scroll_speed"].clone()) {
             self.scroll_speed = speed;

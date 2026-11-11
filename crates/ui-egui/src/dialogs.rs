@@ -101,6 +101,7 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
     dialogs(app, ctx);
     // Last, so it sits above Document Properties when Security's Unlock… asked for it.
     unlock(app, ctx);
+    crate::ocr_ui::show_ocr_progress_windows(app, ctx);
 }
 
 /// Draw the active modal dialog and apply the action the user chose.
@@ -153,7 +154,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let modal = widgets::show_modal_sized(ctx, "dialog", remeasure, |ui| {
         ui.set_width(match dialog {
             Dialog::Properties(_) => 640.0,
-            Dialog::Print => 820.0,
+            Dialog::Print => 840.0,
             Dialog::FieldProps | Dialog::BulkFieldProps => 600.0,
             Dialog::Preferences => 610.0,
             Dialog::About => 820.0,
@@ -164,7 +165,10 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
             dialog_footer(ui, app, dialog, &mut req);
         }
     });
-    finish_dialog(app, dialog, modal.should_close(), &mut req);
+    // 2.2: Clicking outside the Print dialog on the backdrop must NOT close it;
+    // only Escape or the explicit X / Fechar buttons inside the Print dialog close it.
+    let modal_closed = if dialog == Dialog::Print { ctx.input(|i| i.key_pressed(egui::Key::Escape)) } else { modal.should_close() };
+    finish_dialog(app, dialog, modal_closed, &mut req);
 }
 
 /// The dialog's content. Returns `false` when it has its own buttons and no footer is wanted.
@@ -1670,8 +1674,11 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
             ui.horizontal(|ui| {
                 widgets::artcraft_mark(ui, 40.0);
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("PdfCraft").font(theme::semibold(20.0)));
-                    ui.label(crate::i18n::fmt(tl!("Version {v}"), &[("v", &pdfcraft_engine::build_info::version())]));
+                    ui.label(egui::RichText::new("PDF Craft").font(theme::semibold(20.0)));
+                    ui.label(format!(
+                        "{} — Build 20261111.10",
+                        crate::i18n::fmt(tl!("Version {v}"), &[("v", &pdfcraft_engine::build_info::version())])
+                    ));
                 });
             });
             ui.add_space(6.0);
@@ -1688,10 +1695,26 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
                 ui.label(egui::RichText::new(tl!("Part of")).color(t.text_muted));
                 widgets::artcraft_logo(ui, 16.0);
             });
-            ui.add_space(6.0);
-            if let Some(cmd) = widgets::community_links(ui) {
-                req.link_command = Some(cmd);
-            }
+            ui.add_space(10.0);
+            let _ = &req.link_command;
+            egui::Frame::new()
+                .fill(t.hover)
+                .stroke(egui::Stroke::new(1.0, t.border))
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(14, 10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        egui::RichText::new("Engenharia de Melhorias, Otimizações & Customizações:").font(theme::medium(12.5)).color(t.text_muted),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new("Desenvolvedor: Marcos Pires").font(theme::semibold(15.0)).color(t.accent_text));
+                    ui.label(
+                        egui::RichText::new("Reconhecimento OCR em Lote · Integração Windows Explorer · Compartilhamento Direto · Temas Executivos")
+                            .small()
+                            .color(t.text_muted),
+                    );
+                });
         }
     }
     true

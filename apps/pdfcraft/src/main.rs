@@ -232,9 +232,12 @@ fn main() -> eframe::Result {
     if startup.help {
         return print_and_exit(USAGE);
     }
-    startup.files = rejoin_split_paths(startup.files, |p| std::path::Path::new(p).is_file());
+    startup.files = rejoin_split_paths(startup.files, |p| {
+        let path = std::path::Path::new(p);
+        path.is_file() || (startup.ocr_shell && path.is_dir())
+    });
     let may_hand_off = startup.may_hand_off();
-    let startup::Arguments { files, options, control_file, create_images, combine, two_paged, .. } = startup;
+    let startup::Arguments { files, options, control_file, create_images, combine, ocr_shell, two_paged, .. } = startup;
     let integrated = cfg!(target_os = "macos");
     // GNOME on Wayland leaves the window frame to the app (src/decorations.rs).
     let window_controls = if cfg!(any(target_os = "macos", target_os = "windows")) { None } else { decorations::app_drawn() };
@@ -258,13 +261,25 @@ fn main() -> eframe::Result {
     // Absolute for this instance too: links relative to a document resolve against its folder,
     // never the working directory.
     let files = single_instance::absolute(&files);
-    let instance = match single_instance::claim(&files, may_hand_off, combine) {
-        single_instance::Claim::HandedOff => return Ok(()),
-        single_instance::Claim::Primary(server) => Some(server),
-        single_instance::Claim::Alone => None,
+    let files = if ocr_shell {
+        let Some(merged) = coalesce_ocr_shell_files(files) else {
+            return Ok(());
+        };
+        merged
+    } else {
+        files
+    };
+    let instance = if ocr_shell {
+        None
+    } else {
+        match single_instance::claim(&files, may_hand_off, combine) {
+            single_instance::Claim::HandedOff => return Ok(()),
+            single_instance::Claim::Primary(server) => Some(server),
+            single_instance::Claim::Alone => None,
+        }
     };
     let choice = renderer_choice(std::env::var("PDFCRAFT_RENDERER").ok().as_deref());
-    let launch = Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged };
+    let launch = Launch { files, options, control_file, create_images, combine, ocr_shell, integrated, window_controls, two_paged };
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
     // that launched us as well as later ones. Lives until the event loop returns.
     #[cfg(target_os = "macos")]
@@ -273,8 +288,8 @@ fn main() -> eframe::Result {
     let started = Rc::new(Cell::new(false));
     let first = if choice == RendererChoice::Gl { eframe::Renderer::Glow } else { eframe::Renderer::Wgpu };
     let result = eframe::run_native(
-        "PdfCraft",
-        native_options(launch.integrated, launch.window_controls.is_some(), first),
+        "PDF Craft",
+        native_options(launch.integrated, launch.window_controls.is_some(), launch.ocr_shell, first),
         app_creator(
             launch.clone(),
             Rc::clone(&started),
@@ -291,8 +306,8 @@ fn main() -> eframe::Result {
             // usually still works there, so that's better than quitting.
             log::error!("the GPU renderer (wgpu) didn't start: {e}. Starting with OpenGL instead; set PDFCRAFT_RENDERER=gl to skip wgpu.");
             eframe::run_native(
-                "PdfCraft",
-                native_options(launch.integrated, launch.window_controls.is_some(), eframe::Renderer::Glow),
+                "PDF Craft",
+                native_options(launch.integrated, launch.window_controls.is_some(), launch.ocr_shell, eframe::Renderer::Glow),
                 app_creator(
                     launch,
                     started,
@@ -304,6 +319,52 @@ fn main() -> eframe::Result {
         }
         other => other,
     }
+}
+
+/// Coalesces multiple processes spawned simultaneously by Windows Explorer when selecting multiple
+/// PDFs and clicking "Reconhecer Texto (OCR) com PDF Craft" (`--ocr-shell`).
+fn coalesce_ocr_shell_files(files: Vec<String>) -> Option<Vec<String>> {
+    use std::io::Write as _;
+    let temp = std::env::temp_dir();
+    let queue_path = temp.join("pdfcraft-ocr-shell.queue");
+    let lock_path = temp.join("pdfcraft-ocr-shell.lock");
+
+    // Append our file(s) to the shared queue.
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&queue_path) {
+        for path in &files {
+            let _ = writeln!(f, "{path}");
+        }
+        let _ = f.flush();
+    }
+
+    // Clear a stale lock (> 4 seconds old) if one was left behind.
+    let is_fresh = lock_path.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|d| d.as_secs() < 4);
+    if !is_fresh {
+        let _ = std::fs::remove_file(&lock_path);
+    }
+
+    // Try to become the single primary process for this Explorer batch.
+    if std::fs::OpenOptions::new().write(true).create_new(true).open(&lock_path).is_err() {
+        return None;
+    }
+
+    // Wait briefly so all sibling Explorer invocations finish appending to `queue_path`.
+    std::thread::sleep(std::time::Duration::from_millis(380));
+    let mut merged = Vec::new();
+    if let Ok(content) = std::fs::read_to_string(&queue_path) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !merged.iter().any(|p: &String| p == trimmed) {
+                merged.push(trimmed.to_string());
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&queue_path);
+    let _ = std::fs::remove_file(&lock_path);
+    if merged.is_empty() {
+        merged = files;
+    }
+    Some(merged)
 }
 
 /// Which renderer to start with, from `PDFCRAFT_RENDERER`.
@@ -332,11 +393,11 @@ fn retry_with_gl(choice: RendererChoice, app_started: bool) -> bool {
 }
 
 /// The window and renderer settings for one run.
-fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer) -> eframe::NativeOptions {
+fn native_options(integrated: bool, app_frame: bool, ocr_shell: bool, renderer: eframe::Renderer) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("PdfCraft")
-        .with_inner_size([1440.0, 920.0])
-        .with_min_inner_size(pdfcraft_ui_egui::MIN_WINDOW_SIZE)
+        .with_title(if ocr_shell { "Reconhecimento de Texto em Lote (OCR) — PDF Craft" } else { "PDF Craft" })
+        .with_inner_size(if ocr_shell { [780.0, 540.0] } else { [1440.0, 920.0] })
+        .with_min_inner_size(if ocr_shell { [620.0, 420.0] } else { pdfcraft_ui_egui::MIN_WINDOW_SIZE })
         .with_drag_and_drop(true)
         // Wayland app id: matches packaging/linux/ai.storyteller.pdfcraft.desktop.
         .with_app_id(APP_ID);
@@ -360,7 +421,7 @@ fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer)
         // The tab strip is the title bar (pdfcraft_ui_egui::window_controls).
         viewport = viewport.with_decorations(false);
     }
-    let persistence_path = settings_dir().map(|d| d.join("app.ron"));
+    let persistence_path = if ocr_shell { None } else { settings_dir().map(|d| d.join("app.ron")) };
     // Set explicitly, so the renderer never depends on which one eframe defaults to.
     let mut native = eframe::NativeOptions { viewport, persistence_path, renderer, ..Default::default() };
     // PdfCraft installs its own last-resort system face (`PDFCRAFT_SYSTEM_FONTS`); eframe's
@@ -381,6 +442,8 @@ struct Launch {
     create_images: bool,
     /// `--combine`: the files go to the Combine files tab.
     combine: bool,
+    /// `--ocr-shell`: standalone Windows Explorer right-click Batch OCR window.
+    ocr_shell: bool,
     integrated: bool,
     /// The window buttons the app draws, when the desktop leaves the frame to it.
     window_controls: Option<pdfcraft_ui_egui::window_controls::Layout>,
@@ -432,11 +495,11 @@ fn install_taskbar_icon(png: &[u8], set: impl FnOnce(winit::window::Icon)) {
 fn set_taskbar_icon(window: &winit::window::Window) {
     use winit::platform::windows::{IconExtWindows as _, WindowExtWindows as _};
     install_taskbar_icon(APP_ICON_PNG, |icon| window.set_taskbar_icon(Some(icon)));
+    install_taskbar_icon(APP_ICON_PNG, |icon| window.set_window_icon(Some(icon)));
     // The title bar's icon: the small image drawn for this scale in the exe's own icon (build.rs).
     let side = (16.0 * window.scale_factor()).round().clamp(16.0, 256.0) as u32;
-    match winit::window::Icon::from_resource(1, Some(winit::dpi::PhysicalSize::new(side, side))) {
-        Ok(icon) => window.set_window_icon(Some(icon)),
-        Err(e) => log::warn!("window icon: {e}"),
+    if let Ok(icon) = winit::window::Icon::from_resource(1, Some(winit::dpi::PhysicalSize::new(side, side))) {
+        window.set_window_icon(Some(icon));
     }
 }
 
@@ -447,7 +510,7 @@ fn app_creator<'a>(
     instance: Option<&'a single_instance::Server>,
     #[cfg(target_os = "macos")] apple_events: &'a apple_events::AppleEvents,
 ) -> eframe::AppCreator<'a> {
-    let Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged } = launch;
+    let Launch { files, options, control_file, create_images, combine, ocr_shell, integrated, window_controls, two_paged } = launch;
     Box::new(move |cc| {
         started.set(true);
         let mut app = PdfCraftApp::new();
@@ -460,7 +523,9 @@ fn app_creator<'a>(
         if let Some(json) = cc.storage.and_then(|s| s.get_string("pdfcraft").or_else(|| s.get_string(LEGACY_STORAGE_KEY))) {
             app.restore(&json);
         }
-        app.window_state = pdfcraft_ui_egui::window_state::WindowState::started_with(cc.storage);
+        if !ocr_shell {
+            app.window_state = pdfcraft_ui_egui::window_state::WindowState::started_with(cc.storage);
+        }
         app.integrated_titlebar = integrated;
         app.window_controls = window_controls;
         app.system_text_scale = text_scale::system();
@@ -520,8 +585,10 @@ fn app_creator<'a>(
                 &[("folder", &w.folder.display().to_string()), ("error", &w.error)],
             );
         }
-        let defer_layout = two_paged && !files.is_empty() && !create_images;
-        if create_images {
+        let defer_layout = two_paged && !files.is_empty() && !create_images && !ocr_shell;
+        if ocr_shell {
+            app.start_ocr_shell_paths(&files);
+        } else if create_images {
             if let Err(e) = app.begin_image_import_paths(&files) {
                 app.notify(e);
             }

@@ -44,7 +44,7 @@ impl PdfCraftApp {
         let mark = if dirty { " •" } else { "" };
         let titled = |name: Option<String>| {
             name.or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned()))
-                .map_or_else(|| "PdfCraft".to_owned(), |name| format!("{name}{mark} — PdfCraft"))
+                .map_or_else(|| "PDF Craft".to_owned(), |name| format!("{name}{mark} — PDF Craft"))
         };
         let title = titled(front.and_then(|i| crate::canvas::tab_label(self, i)));
         // The web page's title is what an embedding host reads to tell which file opened, so it
@@ -101,6 +101,9 @@ impl PdfCraftApp {
             theme: ThemeKind::Light,
             // A fresh install follows the desktop's appearance (#1248); saved settings override.
             theme_preference: ThemePreference::System,
+            executive_theme: None,
+            themes_gallery_open: false,
+            ocr_standalone: false,
             reading_colors: Default::default(),
             show_page_edge_shadows: true,
             #[cfg(target_os = "linux")]
@@ -145,6 +148,9 @@ impl PdfCraftApp {
             all_tools_tab: (None, false),
             recent: Vec::new(),
             recent_limit: crate::RECENT_FILES_DEFAULT,
+            recent_thumbs: std::collections::HashMap::new(),
+            recent_thumb_tx: None,
+            recent_thumb_rx: None,
             reopen_last_session: false,
             restore_last_view: true,
             last_views: Vec::new(),
@@ -609,7 +615,15 @@ impl PdfCraftApp {
             egui_extras::install_image_loaders(ctx);
             theme::install_fonts_for(ctx, cjk);
             self.fonts_cjk = cjk;
-            theme::apply(ctx, self.theme);
+            if let Some(exec) = self.executive_theme {
+                theme::apply_executive(ctx, exec);
+            } else {
+                theme::set_active_executive_theme(match self.theme {
+                    ThemeKind::Light => theme::ExecutiveTheme::LightClassic,
+                    ThemeKind::Dark => theme::ExecutiveTheme::DarkClassic,
+                });
+                theme::apply(ctx, self.theme);
+            }
             self.styled = true;
         } else {
             self.fonts_ready = true;
@@ -833,6 +847,12 @@ impl PdfCraftApp {
         // The accessible window takes the same name, so a screen reader (AT-SPI on Linux, UIA on
         // Windows) can tell it apart (#4614). egui builds the root node afresh every pass.
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |root| root.set_label(self.window_title.as_str()));
+        // 9: Standalone Windows Explorer Right-Click OCR mode (`--ocr-shell`):
+        // shows ONLY the detailed Batch OCR progress window without the main workspace.
+        if self.ocr_standalone {
+            workflows::ocr_ui::show_standalone_ocr_window(self, ui, &ctx);
+            return;
+        }
         if self.full_screen && self.active.is_some() {
             // Full screen: the page on black, nothing else, as Acrobat's Full Screen Mode (Esc
             // or ⌘L to leave).
@@ -859,13 +879,12 @@ impl PdfCraftApp {
         if self.draws_window_frame() {
             window_controls::resize_edges(&ctx);
         }
-        chrome::tab_strip(self, ui);
-        // A document can hide the toolbars, the menu and the panels around it in its tab (ISO
-        // 32000-2 Table 147); the tab strip stays, and F8 brings the rest back (`viewer_prefs`).
+        // 1.1: Menu bar and mode bar at the very top of the window; document tabs below it.
         let hidden = self.hidden_interface();
         if !hidden.mode_bar(self.native_menu.is_some()) {
             chrome::mode_bar(self, ui);
         }
+        chrome::tab_strip(self, ui);
         // Another mode or the Home tab puts the OCR Verify screen away, as Exit does; Correct
         // recognized text brings it back with its review as it was.
         if self.ocr_verify.open && (self.active.is_none() || self.ocr_verify.shown_in.is_some_and(|m| m != self.mode)) {
@@ -908,6 +927,7 @@ impl PdfCraftApp {
         self.process_pending_edits();
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);
+        dialogs::appearance::show_themes_gallery_window(self, &ctx);
         self.show_progress(&ctx);
         widgets::toast(self, &ctx);
         self.finish_render_frame(&ctx);

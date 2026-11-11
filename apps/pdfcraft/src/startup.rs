@@ -9,6 +9,8 @@ pub(super) struct Arguments {
     pub create_images: bool,
     /// `--combine`: the files go to the Combine files tab.
     pub combine: bool,
+    /// `--ocr-shell`: standalone Windows Explorer right-click Batch OCR window.
+    pub ocr_shell: bool,
     pub new_window: bool,
     pub two_paged: bool,
     pub version: bool,
@@ -17,7 +19,13 @@ pub(super) struct Arguments {
 
 impl Arguments {
     pub fn may_hand_off(&self) -> bool {
-        !self.new_window && !self.files.is_empty() && self.options.is_empty() && self.control_file.is_none() && !self.create_images && !self.two_paged
+        !self.new_window
+            && !self.files.is_empty()
+            && self.options.is_empty()
+            && self.control_file.is_none()
+            && !self.create_images
+            && !self.two_paged
+            && !self.ocr_shell
     }
 
     pub fn parse(args: impl IntoIterator<Item = String>) -> Self {
@@ -38,6 +46,7 @@ impl Arguments {
                 // File Explorer's "Combine files in PdfCraft" (#585): the files go to the Combine
                 // files tab, of the running PdfCraft when there is one.
                 "--combine" => parsed.combine = true,
+                "--ocr-shell" => parsed.ocr_shell = true,
                 "--new-window" => parsed.new_window = true,
                 "--two-paged" => parsed.two_paged = true,
                 flag if flag.starts_with("--two-paged=") => {

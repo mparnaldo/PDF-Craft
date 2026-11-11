@@ -33,6 +33,11 @@ pub fn paint(ui: &egui::Ui, rect: Rect, name: &str, size: f32, tint: Color32) {
     image(name, size, tint).paint_at(ui, Rect::from_center_size(rect.center(), Vec2::splat(size)));
 }
 
+pub fn paint_inline(ui: &mut egui::Ui, name: &str, size: f32, tint: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size + 2.0), egui::Sense::hover());
+    paint(ui, rect, name, size, tint);
+}
+
 /// Square icon button: transparent until hovered; `selected` gets the accent treatment.
 /// `tooltip` is both its accessible name and its one tooltip.
 pub fn button(ui: &mut egui::Ui, name: &str, box_size: f32, selected: bool, tooltip: &str) -> Response {

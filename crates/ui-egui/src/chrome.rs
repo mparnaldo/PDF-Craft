@@ -261,7 +261,7 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         ThemePreference::Light => ("sun", tl!("Light gray")),
                         ThemePreference::Dark => ("moon", tl!("Dark gray")),
                     };
-                    let tip = format!("{}: {label}", tl!("Display theme"));
+                    let tip = format!("{}: {label} (Clique direito para mais temas)", tl!("Display theme"));
                     let response = icons::button(ui, icon, button, false, &tip);
                     // A click cycles System, Light, Dark; a right-click opens the menu.
                     if response.clicked() {
@@ -272,6 +272,9 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         });
                     }
                     egui::Popup::context_menu(&response).id(response.id.with("theme_menu")).show(|ui| appearance_menu(app, ui));
+                    if icons::button(ui, "palette", button, app.themes_gallery_open, "Mais temas profissionais…").clicked() {
+                        app.themes_gallery_open = !app.themes_gallery_open;
+                    }
                     if icons::button(ui, "circle-help", button, false, tl!("Keyboard shortcuts")).clicked() {
                         app.dialog = Some(Dialog::Shortcuts);
                     }
@@ -286,6 +289,24 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
 
 /// The right-click menu on the title bar's theme button.
 fn appearance_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
+    ui.set_min_width(220.0);
+    if ui.selectable_label(app.theme_preference == ThemePreference::System && app.executive_theme.is_none(), tl!("Use system setting")).clicked() {
+        app.execute("view.theme.system");
+        ui.close();
+    }
+    if ui.selectable_label(app.theme_preference == ThemePreference::Light && app.executive_theme.is_none(), tl!("Light theme")).clicked() {
+        app.execute("view.theme.light");
+        ui.close();
+    }
+    if ui.selectable_label(app.theme_preference == ThemePreference::Dark && app.executive_theme.is_none(), tl!("Dark theme")).clicked() {
+        app.execute("view.theme.dark");
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("🎨 Mais temas profissionais…").clicked() {
+        app.themes_gallery_open = true;
+        ui.close();
+    }
     if ui.button(tl!("Appearance settings…")).clicked() {
         app.dialog = Some(Dialog::Preferences);
         ui.close();
@@ -580,27 +601,43 @@ fn tab(ui: &mut egui::Ui, spec: TabSpec<'_>, close: &mut Option<usize>) -> egui:
     theme::hand(resp).on_hover_text(if dirty { crate::i18n::fmt(tl!("{name} — unsaved changes"), &[("name", &shown)]) } else { shown })
 }
 
-/// Width the print, save and info buttons and their gaps take in the mode bar: three buttons, the
-/// 4 pt `item_spacing` after each of them (three gaps, not two), and the 8 pt spacer.
-const MODE_BAR_RIGHT: f32 = 3.0 * 32.0 + 3.0 * 4.0 + 8.0;
+/// Width the print, save, share and info buttons and their gaps take in the mode bar: four buttons,
+/// the 4 pt `item_spacing` after each of them, and the 8 pt spacer.
+const MODE_BAR_RIGHT: f32 = 4.0 * 32.0 + 4.0 * 4.0 + 8.0;
 /// Narrowest search field the mode bar shows; below it the field becomes an icon button.
 const MODE_BAR_SEARCH_MIN: f32 = 140.0;
 
 pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    let bar_t = t.for_menubar();
     // The document in the active tab may hide the menu or the tools (`crate::viewer_prefs`).
     let hidden = app.hidden_interface();
     egui::Panel::top("mode_bar")
         .exact_size(48.0)
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(10, 0)).stroke(Stroke::new(1.0, t.divider)))
+        .frame(egui::Frame::NONE.fill(bar_t.chrome).inner_margin(egui::Margin::symmetric(10, 0)).stroke(Stroke::new(1.0, bar_t.divider)))
         .show(ui, |ui| {
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), bar_t));
+            ui.visuals_mut().override_text_color = Some(bar_t.text);
+            ui.visuals_mut().widgets.noninteractive.fg_stroke.color = bar_t.text;
+            ui.visuals_mut().widgets.inactive.fg_stroke.color = bar_t.text;
+            ui.visuals_mut().widgets.hovered.fg_stroke.color = bar_t.text;
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = bar_t.hover;
+            ui.visuals_mut().widgets.hovered.bg_fill = bar_t.hover;
+            ui.visuals_mut().widgets.active.fg_stroke.color = bar_t.text;
+            ui.visuals_mut().widgets.active.weak_bg_fill = bar_t.pressed;
+            ui.visuals_mut().widgets.active.bg_fill = bar_t.pressed;
+            ui.visuals_mut().widgets.open.fg_stroke.color = bar_t.text;
+            ui.visuals_mut().widgets.open.weak_bg_fill = bar_t.hover;
+            ui.visuals_mut().widgets.open.bg_fill = bar_t.hover;
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 // The menus, unless the native macOS menu bar has them or the document hides them.
                 if app.native_menu.is_none() && !hidden.menubar {
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), t));
                     app.menu_bar_ui(ui);
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), bar_t));
                     ui.add_space(6.0);
-                    ui.painter().vline(ui.cursor().left(), ui.max_rect().y_range().shrink(12.0), Stroke::new(1.0, t.divider));
+                    ui.painter().vline(ui.cursor().left(), ui.max_rect().y_range().shrink(12.0), Stroke::new(1.0, bar_t.border));
                     ui.add_space(10.0);
                 }
                 if hidden.toolbar {
@@ -609,7 +646,7 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 // Acrobat's mode bar has no Read tab: reading is what the viewer does with no tool
                 // in use. Read mode (the panes hidden) stays a View command and a default workspace.
                 let modes = [(Mode::AllTools, "All tools"), (Mode::Edit, "Edit"), (Mode::Convert, "Convert"), (Mode::Sign, "E-Sign")];
-                // What the right side needs (three 32 px buttons, gaps) and the least search box worth showing.
+                // What the right side needs (four 32 px buttons, gaps) and the least search box worth showing.
                 let avail = ui.available_width();
                 let tabs_w: f32 = modes.iter().map(|(_, l)| widgets::mode_tab_width(ui, tl!(*l))).sum::<f32>() + 2.0 * (modes.len() as f32 - 1.0);
                 let inline_tabs = avail >= tabs_w + MODE_BAR_RIGHT + MODE_BAR_SEARCH_MIN;
@@ -628,6 +665,7 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         tl!(modes.iter().find(|(m, _)| *m == app.mode).map_or("All tools", |(_, l)| *l))
                     };
                     let resp = widgets::ghost_button(ui, "chevron-down", current);
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), t));
                     egui::Popup::menu(&resp).show(|ui| {
                         ui.set_min_width(160.0);
                         for (mode, label) in modes {
@@ -636,11 +674,13 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             }
                         }
                     });
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), bar_t));
                 }
                 let left = ui.available_width();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let has_doc = app.active.is_some();
+                    let mut share_target = None;
                     ui.add_enabled_ui(has_doc, |ui| {
                         let tip = crate::commands::command_tip(ui.ctx(), tl!("Print ({key})"), "print.dialog");
                         // A document that forbids printing says so here, before the dialog (#2669).
@@ -656,11 +696,22 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         if icons::button(ui, "save", 32.0, false, &tip).clicked() {
                             app.run_command("file.save");
                         }
+                        let share_resp = icons::button(ui, "share-2", 32.0, false, tl!("Compartilhar"));
+                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), t));
+                        egui::Popup::menu(&share_resp).show(|ui| {
+                            crate::share::share_menu(ui, |target| {
+                                share_target = Some(target);
+                            });
+                        });
+                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), bar_t));
                         let tip = crate::commands::command_tip(ui.ctx(), tl!("Document properties ({key})"), "file.properties");
                         if icons::button(ui, "info", 32.0, false, &tip).clicked() {
                             app.dialog = Some(Dialog::Properties(PropsTab::Description));
                         }
                     });
+                    if let Some(target) = share_target {
+                        crate::share::share_document(app, target);
+                    }
                     ui.add_space(8.0);
                     let search_w = (left - MODE_BAR_RIGHT).clamp(0.0, 260.0);
                     let opened = if search_w >= MODE_BAR_SEARCH_MIN {
@@ -674,6 +725,7 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     }
                 });
             });
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("pdfcraft-theme"), t));
         });
 }
 

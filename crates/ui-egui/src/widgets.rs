@@ -632,24 +632,66 @@ pub fn progress_notice(app: &PdfCraftApp, ctx: &egui::Context) -> bool {
     cancel
 }
 
-/// The ArtCraft wordmark (Storyteller's brand, docs/brand/; not open source), sized to `height`.
-pub fn artcraft_logo(ui: &mut egui::Ui, height: f32) -> Response {
-    let dark = ui.visuals().dark_mode;
-    let (uri, bytes): (&str, &'static [u8]) = if dark {
-        ("bytes://artcraft-logo-white.svg", include_bytes!("../../../docs/brand/artcraft-logo-white.svg"))
-    } else {
-        ("bytes://artcraft-logo.svg", include_bytes!("../../../docs/brand/artcraft-logo.svg"))
+/// Decodes an embedded PNG image using the `png` crate and caches it as an egui GPU texture.
+pub fn load_png_texture(ctx: &egui::Context, name: &'static str, png_bytes: &[u8]) -> Option<egui::TextureHandle> {
+    let cache_id = egui::Id::unique(name);
+    if let Some(tex) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(cache_id)) {
+        return Some(tex);
+    }
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16 | png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().ok()?;
+    let buf_size = reader.output_buffer_size()?;
+    let mut buf = vec![0u8; buf_size];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let bytes = buf.get(..info.buffer_size())?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let image = match info.color_type {
+        png::ColorType::Rgba => egui::ColorImage::from_rgba_unmultiplied([w, h], bytes),
+        png::ColorType::Rgb => egui::ColorImage::from_rgb([w, h], bytes),
+        png::ColorType::GrayscaleAlpha => {
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for chunk in bytes.as_chunks::<2>().0 {
+                rgba.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
+            }
+            egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba)
+        }
+        png::ColorType::Grayscale => {
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for &g in bytes {
+                rgba.extend_from_slice(&[g, g, g, 255]);
+            }
+            egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba)
+        }
+        _ => return None,
     };
-    ui.add(egui::Image::from_bytes(uri, bytes).max_height(height).alt_text("ArtCraft"))
+    let tex = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(cache_id, tex.clone()));
+    Some(tex)
 }
 
-/// The ArtCraft mark (brand blue, works on light and dark), `size` points square.
+/// The PDF Craft brand mark, sized to `height`.
+pub fn artcraft_logo(ui: &mut egui::Ui, height: f32) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(height, height), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, "PDF Craft"));
+    if let Some(tex) =
+        load_png_texture(ui.ctx(), "pdfcraft-logo-256", include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png"))
+    {
+        ui.painter().image(tex.id(), rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+    }
+    resp
+}
+
+/// The PDF Craft mark (3D app icon, works on light and dark), `size` points square.
 pub fn artcraft_mark(ui: &mut egui::Ui, size: f32) -> Response {
-    ui.add(
-        egui::Image::from_bytes("bytes://artcraft-mark.svg", include_bytes!("../../../docs/brand/artcraft-mark.svg"))
-            .fit_to_exact_size(vec2(size, size))
-            .alt_text("ArtCraft"),
-    )
+    let (rect, resp) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, "PDF Craft"));
+    if let Some(tex) =
+        load_png_texture(ui.ctx(), "pdfcraft-mark-256", include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png"))
+    {
+        ui.painter().image(tex.id(), rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+    }
+    resp
 }
 
 /// Buttons for every community link (`pdfcraft_engine::links`), Discord first and prominent.

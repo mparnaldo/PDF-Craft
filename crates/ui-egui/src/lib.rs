@@ -37,6 +37,7 @@ macro_rules! tl_ctx {
 pub mod canvas;
 mod chrome;
 mod image_engine;
+pub mod share;
 pub use combine_grid::ThumbState as CombineThumb;
 pub use combine_ui::{Columns as CombineColumns, CombineView, Lock as CombineLock, SortKey};
 mod commands;
@@ -303,6 +304,8 @@ struct PendingDestination {
     receiver: std::sync::mpsc::Receiver<Option<(usize, pdfcraft_render::DestView)>>,
 }
 
+pub(crate) type RecentThumbMsg = (String, Option<(u32, u32, Vec<u8>)>);
+
 pub struct PdfCraftApp {
     /// Split view (`panes`); which pane shows each tab is its view's.
     pub panes: panes::Panes,
@@ -370,6 +373,12 @@ pub struct PdfCraftApp {
     /// Resolved colours, including the current OS theme when following the system.
     pub theme: ThemeKind,
     pub theme_preference: ThemePreference,
+    /// Optional executive theme chosen in the dedicated Theme Gallery.
+    pub executive_theme: Option<theme::ExecutiveTheme>,
+    /// Whether the dedicated floating Theme Gallery window is open.
+    pub themes_gallery_open: bool,
+    /// Whether the app was launched in standalone Windows Explorer OCR mode (`--ocr-shell`).
+    pub ocr_standalone: bool,
     /// The reading-colours preference (Preferences ▸ Reading colours): applied to every open
     /// document, and documents open with it (Acrobat's Replace Document Colors).
     pub reading_colors: pdfcraft_render::ReadingColors,
@@ -460,6 +469,9 @@ pub struct PdfCraftApp {
     pub recent: Vec<RecentFile>,
     /// How many recent files to keep, 0 for no list (Preferences ▸ Documents and view, #5572).
     pub recent_limit: usize,
+    pub(crate) recent_thumbs: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    pub(crate) recent_thumb_tx: Option<std::sync::mpsc::Sender<String>>,
+    pub(crate) recent_thumb_rx: Option<std::sync::mpsc::Receiver<RecentThumbMsg>>,
     /// Preferences: reopen the files that were open when PdfCraft last closed (#442).
     pub reopen_last_session: bool,
     /// Restore last view settings when reopening documents (Preferences ▸ Documents and view;

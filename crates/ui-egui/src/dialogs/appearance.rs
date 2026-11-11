@@ -4,7 +4,7 @@
 use egui::{CornerRadius, Rect, RichText, Stroke, pos2, vec2};
 
 use crate::PdfCraftApp;
-use crate::theme::{self, ThemeKind, ThemePreference, Tokens};
+use crate::theme::{self, ALL_EXECUTIVE_THEMES, ExecutiveTheme, ThemeKind, ThemePreference, Tokens};
 
 /// The themes each card offers. One of each today; a new theme is one more row here.
 pub const LIGHT_THEMES: &[(ThemeKind, &str)] = &[(ThemeKind::Light, "Light gray")];
@@ -26,34 +26,47 @@ fn mode_command(preference: ThemePreference) -> &'static str {
     }
 }
 
-/// A miniature PdfCraft window in `kind`'s colours: title bar and tabs, the tool bar, the page
-/// thumbnails, a page on the pasteboard and the right-hand panel.
+/// A miniature PdfCraft window in `kind`'s colours: contrasting menu bar at the top, document tabs
+/// below it, the page thumbnails, a page on the pasteboard and the right-hand panel.
 fn preview(ui: &mut egui::Ui, kind: ThemeKind, width: f32) {
-    let p = Tokens::for_kind(kind);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 118.0), egui::Sense::hover());
+    let exec = match kind {
+        ThemeKind::Light => ExecutiveTheme::LightClassic,
+        ThemeKind::Dark => ExecutiveTheme::DarkClassic,
+    };
+    preview_executive(ui, exec, width);
+}
+
+fn preview_executive(ui: &mut egui::Ui, exec: ExecutiveTheme, width: f32) {
+    let p = Tokens::for_executive(exec);
+    let prev = theme::active_executive_theme();
+    theme::set_active_executive_theme(exec);
+    let bar_p = p.for_menubar();
+    theme::set_active_executive_theme(prev);
+
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 68.0), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3.0, p.chrome);
-    let title = Rect::from_min_size(rect.min, vec2(rect.width(), 12.0));
-    painter.rect_filled(title, 0.0, p.titlebar);
-    // The active tab and the theme button.
-    painter.rect_filled(Rect::from_min_size(title.min + vec2(6.0, 3.0), vec2(36.0, 9.0)), 2.0, p.panel);
-    painter.rect_filled(Rect::from_min_size(title.min + vec2(9.0, 6.0), vec2(20.0, 2.0)), 1.0, p.text);
-    painter.circle_filled(pos2(title.right() - 7.0, title.center().y), 2.5, p.icon);
-    // The tool bar, with its first tool active.
-    let tools = Rect::from_min_size(pos2(rect.left(), title.bottom()), vec2(rect.width(), 12.0));
-    painter.rect_filled(tools, 0.0, p.panel);
-    for i in 0..8 {
-        let c = if i == 0 { p.accent } else { p.icon };
-        painter.rect_filled(Rect::from_min_size(tools.min + vec2(8.0 + i as f32 * 9.0, 3.5), vec2(5.0, 5.0)), 1.0, c);
+    // 1. Top contrasting full-width Menu Bar (mode_bar).
+    let menubar = Rect::from_min_size(rect.min, vec2(rect.width(), 8.0));
+    painter.rect_filled(menubar, 0.0, bar_p.chrome);
+    for i in 0..5 {
+        let c = if i == 0 { bar_p.accent } else { bar_p.text };
+        painter.rect_filled(Rect::from_min_size(menubar.min + vec2(5.0 + i as f32 * 8.5, 2.5), vec2(6.0, 2.5)), 0.5, c);
     }
-    let body = Rect::from_min_max(pos2(rect.left(), tools.bottom() + 1.0), rect.max);
-    // Page thumbnails on the left, the second one selected.
+    // 2. Document tab strip below the Menu Bar.
+    let title = Rect::from_min_size(pos2(rect.left(), menubar.bottom()), vec2(rect.width(), 7.0));
+    painter.rect_filled(title, 0.0, p.titlebar);
+    painter.rect_filled(Rect::from_min_size(title.min + vec2(4.0, 1.0), vec2(26.0, 6.0)), 1.5, p.panel);
+    painter.rect_filled(Rect::from_min_size(title.min + vec2(6.0, 3.0), vec2(14.0, 1.5)), 0.5, p.text);
+    painter.circle_filled(pos2(title.right() - 5.0, title.center().y), 1.5, p.icon);
+    let body = Rect::from_min_max(pos2(rect.left(), title.bottom() + 1.0), rect.max);
+    // Page thumbnails on the left, the first one selected.
     let rail = Rect::from_min_size(body.min, vec2((body.width() * 0.16).round(), body.height()));
     painter.rect_filled(rail, 0.0, p.panel);
-    for i in 0..3 {
-        let thumb = Rect::from_min_size(rail.min + vec2(rail.width() * 0.25, 6.0 + i as f32 * 26.0), vec2(rail.width() * 0.5, 20.0));
-        if i == 1 {
-            painter.rect_filled(thumb.expand(2.0), 2.0, p.accent_soft);
+    for i in 0..2 {
+        let thumb = Rect::from_min_size(rail.min + vec2(rail.width() * 0.2, 4.0 + i as f32 * 17.0), vec2(rail.width() * 0.6, 13.0));
+        if i == 0 {
+            painter.rect_filled(thumb.expand(1.0), 1.0, p.accent_soft);
         }
         painter.rect_filled(thumb, 1.0, egui::Color32::WHITE);
         painter.rect_stroke(thumb, 1.0, egui::Stroke::new(0.5, p.border), egui::StrokeKind::Outside);
@@ -61,23 +74,23 @@ fn preview(ui: &mut egui::Ui, kind: ThemeKind, width: f32) {
     // The right-hand panel: a heading and a few rows.
     let side = Rect::from_min_max(pos2(body.right() - (body.width() * 0.22).round(), body.top()), body.max);
     painter.rect_filled(side, 0.0, p.panel);
-    painter.rect_filled(Rect::from_min_size(side.min + vec2(5.0, 5.0), vec2(side.width() * 0.5, 2.5)), 1.0, p.text);
-    for i in 0..4 {
-        let y = side.top() + 14.0 + i as f32 * 8.0;
-        painter.rect_filled(Rect::from_min_size(pos2(side.left() + 5.0, y), vec2(side.width() * 0.7, 2.0)), 1.0, p.text_muted);
+    painter.rect_filled(Rect::from_min_size(side.min + vec2(4.0, 4.0), vec2(side.width() * 0.5, 2.0)), 0.5, p.text);
+    for i in 0..3 {
+        let y = side.top() + 9.0 + i as f32 * 5.0;
+        painter.rect_filled(Rect::from_min_size(pos2(side.left() + 4.0, y), vec2(side.width() * 0.65, 1.5)), 0.5, p.text_muted);
     }
     // The page, white in both themes, with a heading and lines of text.
     let paste = Rect::from_min_max(pos2(rail.right(), body.top()), pos2(side.left(), body.bottom()));
     painter.rect_filled(paste, 0.0, p.pasteboard);
-    let page_h = paste.height() - 10.0;
+    let page_h = paste.height() - 6.0;
     let page = Rect::from_center_size(paste.center(), vec2(page_h * 0.77, page_h));
     painter.rect_filled(page.translate(vec2(1.0, 1.0)), 1.0, p.page_shadow);
     painter.rect_filled(page, 1.0, egui::Color32::WHITE);
     let ink = egui::Color32::from_gray(0x60);
-    painter.rect_filled(Rect::from_min_size(page.min + vec2(6.0, 7.0), vec2(page.width() * 0.5, 3.0)), 1.0, egui::Color32::from_gray(0x30));
-    for i in 0..8 {
-        let w = if i % 4 == 3 { 0.45 } else { 0.8 };
-        painter.rect_filled(Rect::from_min_size(page.min + vec2(6.0, 15.0 + i as f32 * 6.0), vec2(page.width() * w - 6.0, 1.5)), 0.5, ink);
+    painter.rect_filled(Rect::from_min_size(page.min + vec2(4.0, 4.0), vec2(page.width() * 0.5, 2.0)), 0.5, egui::Color32::from_gray(0x30));
+    for i in 0..5 {
+        let w = if i % 3 == 2 { 0.5 } else { 0.8 };
+        painter.rect_filled(Rect::from_min_size(page.min + vec2(4.0, 8.5 + i as f32 * 4.5), vec2(page.width() * w - 4.0, 1.2)), 0.5, ink);
     }
 }
 
@@ -178,9 +191,145 @@ pub(crate) fn preferences_section_with_context(
         }
         ctx.scroll_if_first_match(&dark_resp, dark_matches);
     });
-    ui.add_space(4.0);
+    ui.add_space(8.0);
+    egui::Frame::new()
+        .fill(t.accent_soft.gamma_multiply(0.35))
+        .stroke(Stroke::new(1.0, t.accent.gamma_multiply(0.45)))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                crate::icons::paint_inline(ui, "palette", 16.0, t.accent);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Galeria de Temas Profissionais (8 Temas Executivos)").font(theme::semibold(13.0)).color(t.text));
+                    ui.label(
+                        RichText::new(format!(
+                            "Tema atual: {} — todos com contraste dedicado na barra superior.",
+                            app.current_executive_theme().title()
+                        ))
+                        .size(11.5)
+                        .color(t.text_muted),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::widgets::pill_button(ui, "Mais temas…", true).clicked() {
+                        app.themes_gallery_open = true;
+                    }
+                });
+            });
+        });
+    ui.add_space(6.0);
     // Acrobat's "Highlight existing fields": shared with the toggle in the form bar.
     ctx.checkbox(ui, &mut app.view_defaults.highlight_fields, tl!("Highlight fields"), t);
+}
+
+/// Dedicated floating gallery window with 8 minimalist, professional themes (2 classic + 6 executive).
+pub fn show_themes_gallery_window(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    if !app.themes_gallery_open {
+        return;
+    }
+    let t = Tokens::get(ctx);
+    let mut open = app.themes_gallery_open;
+    let mut picked: Option<ExecutiveTheme> = None;
+    let mut close_clicked = false;
+
+    egui::Window::new("🎨 Galeria de Temas Profissionais — PDF Craft")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .default_size([660.0, 480.0])
+        .min_width(580.0)
+        .min_height(380.0)
+        .max_height(520.0)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                crate::icons::paint_inline(ui, "swatch-book", 18.0, t.accent);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Escolha o Tema Visual do PDF Craft").font(theme::semibold(14.0)).color(t.text));
+                    ui.label(
+                        RichText::new("Paletas minimalistas e corporativas com barra superior inteira contrastante de ponta a ponta.")
+                            .size(11.5)
+                            .color(t.text_muted),
+                    );
+                });
+            });
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            let active_exec = app.current_executive_theme();
+
+            egui::ScrollArea::vertical().id_salt("themes_gallery_scroll").auto_shrink([false, false]).max_height(350.0).show(ui, |ui| {
+                for pair in ALL_EXECUTIVE_THEMES.chunks(2) {
+                    ui.columns(2, |cols| {
+                        for (col_idx, &exec) in pair.iter().enumerate() {
+                            let col_ui = &mut cols[col_idx];
+                            let is_active = active_exec == exec;
+                            let stroke = if is_active { Stroke::new(2.0, t.accent) } else { Stroke::new(1.0, t.border) };
+                            let fill = if is_active { t.accent_soft.gamma_multiply(0.28) } else { t.card };
+                            let scope = col_ui.scope_builder(
+                                egui::UiBuilder::new().id_salt(("exec_theme_card", exec.to_u8())).sense(egui::Sense::click()),
+                                |ui| {
+                                    egui::Frame::new()
+                                        .fill(fill)
+                                        .stroke(stroke)
+                                        .corner_radius(CornerRadius::same(6))
+                                        .inner_margin(egui::Margin::symmetric(8, 6))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                let kind_icon = match exec.kind() {
+                                                    ThemeKind::Light => "sun",
+                                                    ThemeKind::Dark => "moon",
+                                                };
+                                                crate::icons::paint_inline(ui, kind_icon, 13.0, t.accent);
+                                                ui.label(RichText::new(exec.title()).font(theme::semibold(12.5)).color(t.text));
+                                                if is_active {
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.label(RichText::new("✓ Ativo").font(theme::semibold(11.0)).color(t.accent_text));
+                                                    });
+                                                }
+                                            });
+                                            ui.add_space(1.0);
+                                            ui.label(RichText::new(exec.subtitle()).size(10.5).color(t.text_muted));
+                                            ui.add_space(4.0);
+                                            preview_executive(ui, exec, ui.available_width());
+                                        });
+                                },
+                            );
+                            if theme::hand(scope.response).clicked() {
+                                picked = Some(exec);
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("Usar configuração do sistema").clicked() {
+                    app.set_theme_preference(ThemePreference::System);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::widgets::pill_button(ui, "Concluído", true).clicked() {
+                        close_clicked = true;
+                    }
+                });
+            });
+        });
+
+    if let Some(exec) = picked {
+        app.set_executive_theme(exec);
+    }
+    if close_clicked {
+        open = false;
+    }
+    app.themes_gallery_open = open;
 }
 
 #[cfg(test)]

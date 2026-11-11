@@ -540,6 +540,13 @@ impl PdfCraftApp {
                 self.save_active(SaveTarget::InPlace);
             }
             Some(crate::canvas::ViewAction::Extract) => self.open_extract_dialog(),
+            Some(crate::canvas::ViewAction::ShareSelection(target)) => {
+                let pages = self.views.get(i).map(|v| v.target_pages()).unwrap_or_default();
+                crate::share::share_pages(self, &pages, target);
+            }
+            Some(crate::canvas::ViewAction::ShareDoc(target)) => {
+                crate::share::share_document(self, target);
+            }
             Some(crate::canvas::ViewAction::Split) => self.dialog = Some(crate::Dialog::Split),
             Some(crate::canvas::ViewAction::SplitBeforeSelected) => {
                 self.split_draft.mode = crate::SplitMode::Selection;

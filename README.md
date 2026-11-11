@@ -34,6 +34,99 @@
   <a href="https://discord.gg/artcraft"><img alt="Join the ArtCraft community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 </p>
 
+---
+
+# 🚀 PDF Craft — Edição Executiva Customizada
+> **Engenharia de Melhorias, Otimizações & Customizações:** Marcos Pires  
+> **Versão Oficial:** v0.20.0 | **Build Determinístico:** 20261111.10 | **Ambiente:** Windows 10/11 x64  
+> **Repositório Oficial:** [github.com/mparnaldo/PDF-Craft](https://github.com/mparnaldo/PDF-Craft)
+
+Esta é a distribuição corporativa e otimizada do **PDF Craft**, desenvolvida para entregar máxima fidelidade, acabamento visual executivo no padrão Adobe Acrobat, recursos avançados de OCR com integração ao Windows Explorer e portabilidade autônoma e determinística.
+
+---
+
+## 🎯 O que o Programa Faz
+
+### 1. 🔍 Reconhecimento Óptico de Caracteres (OCR) Avançado & em Lote
+- **OCR Integrado e Standalone:** Realiza reconhecimento de texto de alta precisão em múltiplos idiomas (Português do Brasil, Inglês, Espanhol e Japonês) usando modelos neurais ONNX locais (`text-detection` e `text-recognition`).
+- **Integração com o Windows Explorer (`--ocr-shell`):** Clique com o botão direito do mouse sobre qualquer arquivo PDF ou pasta no Explorer e selecione *"Reconhecer Texto (OCR) com PDF Craft"*. O processo é acionado em modo standalone leve, exibindo apenas uma janela detalhada com barras de progresso da página e do lote, console de logs em tempo real e botão de cancelamento seguro, sem carregar a interface pesada do aplicativo.
+- **Pré-processamento Automático de Imagens:**
+  - *Auto-rotação:* Detecta e desvira automaticamente páginas escaneadas a 90°, 180° ou 270°.
+  - *Deskew:* Alinha e endireita linhas de texto tortas ou inclinadas.
+  - *Denoise:* Remove ruídos, granulações e manchas de scanner.
+- **Modos de Salvamento Flexíveis:** Opção para substituir diretamente o arquivo original ou gerar cópia pesquisável com sufixo `_ocr`.
+- **Card de Configuração nas Preferências:** Defina na aba de Preferências o comportamento padrão do OCR para execuções rotineiras.
+
+### 2. 📤 Módulo de Compartilhamento Direto
+- **WhatsApp Web & Desktop:** Copia o arquivo/caminho e dispara o WhatsApp diretamente com um clique.
+- **Microsoft Outlook (`outlook.exe /a`):** Anexa automaticamente o documento atual em uma nova mensagem de e-mail pronta para envio.
+- **Compartilhamento de Páginas Específicas:** Permite selecionar uma ou mais páginas avulsas e gerar instantaneamente um PDF temporário contendo apenas as páginas escolhidas para anexo.
+
+### 3. 🎨 Identidade Visual 3D & Temas Executivos
+- **Ícones 3D com Transparência Total:**
+  - *Ícone do Aplicativo (Grupo 1 PE):* Origami tridimensional da letra "P" sobre fundo transparente em 9 resoluções (16px a 256px).
+  - *Ícone de Documento PDF (Grupo 2 PE):* Design sofisticado com formato de documento encadernado com dobra superior e fita/etiqueta vermelha com inscrição "PDF" no canto inferior direito, eliminando o aspecto quadrado de ícones convencionais no Windows Explorer.
+- **8 Temas Executivos Profissionais:** Incluindo Claro Clássico com Barra Chumbo, Escuro Clássico, Gelo Nórdico, Papiro Executivo, Prata Corporativo, Ardósia Executivo, Azul Cobalto e Grafite Profundo OLED.
+- **Barra Superior Contrastante de Ponta a Ponta:** A barra inteira do menu (`mode_bar`) possui contraste executivo em tom chumbo escuro, delimitando a interface com elegância.
+- **Galeria de Temas Harmonizada:** Janela flutuante modal proporcional (`660x480`) com miniaturas compactas de 68px e botões inferiores sempre visíveis.
+
+### 4. 📄 Tela Inicial (Home) no Estilo Adobe Acrobat
+- **Miniaturas Reais com Renderização Assíncrona:** Renderização em segundo plano da primeira página de cada documento recente, com sombra suave (*drop shadow*), borda sutil de 1px e cartão dobrado como fallback procedural instantâneo.
+- **Metadados Claros e Organizados:** Nome do arquivo na primeira linha, `PDF · caminho` na segunda, e quantidade de páginas com tamanho formatado à direita.
+- **Ícone Oficial nos Menus:** Menus do topo (Arquivo ▸ Abrir recentes) utilizam a textura oficial 3D do PDF Craft.
+
+### 5. 🖨️ Painel de Impressão Refinado
+- Todas as seções e botões de comando da caixa de diálogo de impressão contam com ícones minimalistas e intuitivos da suíte DevExpress / Lucide.
+
+### 6. 🛡️ Portabilidade e Estabilidade Incondicional
+- **Bibliotecas MSVC Embutidas:** O instalador inclui as DLLs de tempo de execução da Microsoft (`vcruntime140.dll`, `msvcp140.dll`, etc.), garantindo que o programa execute de primeira em computadores recém-formatados sem necessidade de instalar o Visual C++ Redistributable.
+- **Zero Telas Pretas:** Nenhuma janela de console temporária pisca na tela durante a inicialização ou ao abrir arquivos.
+- **Diretriz `Never crash`:** Sem atalhos de `unwrap` em código de produção, checagem rígida de limites numéricos e tratamento robusto de erros com `Result`.
+
+---
+
+## 🚫 O que o Programa NÃO Faz
+- **Não quebra criptografia de PDFs protegidos por senha sem a chave correspondente:** Documentos criptografados exigem a senha correta para visualização ou extração.
+- **Não executa scripts remotos sem permissão:** Todo código JavaScript contido em formulários PDF é executado em ambiente isolado (sandbox) sem acesso à rede ou a arquivos locais.
+- **Não coleta dados nem envia telemetria:** O software opera 100% offline, respeitando a privacidade absoluta dos seus documentos.
+
+---
+
+## 🔨 Instruções de Compilação e Empacotamento
+
+### Pré-requisitos
+- **Rust Toolchain:** Versão 1.85+ ou 1.95 (Edição 2024, target `x86_64-pc-windows-msvc`).
+- **Visual Studio C++ Build Tools:** MSVC v143+ e Windows SDK correspondente.
+- **Inno Setup 6:** Utilitário `ISCC.exe` para geração do instalador.
+
+### 1. Configurar Variáveis de Ambiente no PowerShell
+```powershell
+$vc15 = "C:\Program Files\Microsoft Visual Studio\18\Enterprise\SDK\ScopeCppSDK\vc15"
+$env:PATH = "$vc15\VC\bin;$env:PATH"
+$env:LIB = "$vc15\VC\lib;$vc15\SDK\lib"
+$env:INCLUDE = "$vc15\VC\include;$vc15\SDK\include\ucrt;$vc15\SDK\include\um;$vc15\SDK\include\shared"
+$env:CRAFT_I18N_DIR = "$PWD\scratch\craft-i18n"
+```
+
+### 2. Compilar o Binário em Release
+```powershell
+cargo build --release -p pdfcraft
+Copy-Item "target\release\pdfcraft.exe" "bin\pdfcraft.exe" -Force
+```
+
+### 3. Injetar os Recursos de Ícone 3D (PE Groups 1 e 2)
+```powershell
+powershell -ExecutionPolicy Bypass -File "scratch\embed_icons_clean.ps1"
+```
+
+### 4. Gerar o Instalador Executável
+```powershell
+& "C:\Users\serversif\AppData\Local\Programs\Inno Setup 6\ISCC.exe" "packaging\windows\setup.iss"
+```
+O pacote de instalação final será gerado em: `dist\PDFCraft-Setup-0.20.0.exe`.
+
+---
+
 <p align="center">
   <a href="https://getartcraft.com/apps/pdfcraft"><b>PdfCraft on getartcraft.com</b></a> ·
   <a href="https://getartcraft.com/">ArtCraft</a> ·

@@ -2,6 +2,8 @@
 plan/
 /target
 /dist
+/bin
+/installer
 /corpus
 /log
 .DS_Store

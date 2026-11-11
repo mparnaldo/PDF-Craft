@@ -103,6 +103,110 @@ fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, name: &str, value: &m
         .accessible_name(name);
 }
 
+/// Renders a visually grouped card panel with an icon and bold section header for the Print dialog.
+fn group_card(ui: &mut egui::Ui, t: &Tokens, icon: &str, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(t.hover)
+        .stroke(Stroke::new(1.0, t.border))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.add(crate::icons::image(icon, 15.0, t.accent));
+                ui.label(egui::RichText::new(title).font(theme::semibold(13.0)).color(t.text));
+            });
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(6.0);
+            add_contents(ui);
+        });
+}
+
+/// Row label preceded by a harmonious, minimalist DevExpress-style vector icon.
+fn icon_label(ui: &mut egui::Ui, icon: &str, color: Color32, text: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        crate::icons::paint_inline(ui, icon, 13.0, color);
+        ui.label(text)
+    })
+    .inner
+}
+
+/// Outlined button with a left-aligned minimalist vector icon that preserves the exact accessible label.
+fn icon_button(ui: &mut egui::Ui, icon: &str, color: Color32, label: &str) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let enabled = ui.is_enabled();
+    let font = theme::regular(13.0);
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = f32::INFINITY;
+    job.append(label, 17.0, egui::TextFormat { font_id: font, color: Color32::PLACEHOLDER, ..Default::default() });
+    let resp = ui.add(egui::Button::new(egui::WidgetText::from(job)));
+    let pad_x = ui.spacing().button_padding.x;
+    let tint = if enabled { color } else { t.text_faint.gamma_multiply(0.6) };
+    let icon_rect = Rect::from_center_size(pos2(resp.rect.left() + pad_x + 6.0, resp.rect.center().y), vec2(13.0, 13.0));
+    crate::icons::paint(ui, icon_rect, icon, 13.0, tint);
+    resp
+}
+
+/// Mode tab with a minimalist vector icon for the Page Sizing & Handling section.
+fn icon_mode_tab(ui: &mut egui::Ui, icon: &str, icon_color: Color32, label: &str, active: bool) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let font = if active { theme::semibold(13.0) } else { theme::medium(13.0) };
+    let text_color = if active { t.text } else { t.text_muted };
+    let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), text_color).size().x);
+    let (rect, resp) = ui.allocate_exact_size(vec2(w + 38.0, 38.0), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), active, label));
+    let press = theme::Press::track(ui, &resp);
+    let well = rect.shrink2(vec2(2.0, 4.0));
+    if active {
+        if press.down > 0.01 {
+            ui.painter().rect_filled(well, egui::CornerRadius::same(6), t.pressed.gamma_multiply(press.down));
+        }
+    } else {
+        press.wash(ui, well, 6, false);
+    }
+    let body = rect.translate(press.offset());
+    let tint = if !ui.is_enabled() {
+        t.text_faint.gamma_multiply(0.6)
+    } else if active {
+        icon_color
+    } else {
+        icon_color.gamma_multiply(0.82)
+    };
+    let icon_rect = Rect::from_center_size(pos2(body.left() + 14.0, body.center().y), vec2(13.5, 13.5));
+    crate::icons::paint(ui, icon_rect, icon, 13.5, tint);
+    ui.painter().text(pos2(body.left() + 25.0, body.center().y), egui::Align2::LEFT_CENTER, label, font, text_color);
+    if active {
+        let r = Rect::from_min_max(rect.left_bottom() + vec2(8.0, -2.0), rect.right_bottom() - vec2(8.0, 0.0));
+        ui.painter().rect_filled(r, egui::CornerRadius { nw: 1, ne: 1, sw: 0, se: 0 }, t.accent);
+    }
+    theme::hand(resp)
+}
+
+/// Footer pill button with a minimalist vector icon on the left.
+fn icon_pill_button(ui: &mut egui::Ui, icon: &str, icon_color: Color32, label: &str, primary: bool) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let font = theme::medium(12.5);
+    let text_color = if primary { Color32::WHITE } else { t.text };
+    let label_galley = crate::bidi::layout_ui(ui, label.to_owned(), font, text_color);
+    let w = label_galley.size().x;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w + 44.0, 30.0), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    let press = theme::Press::track(ui, &resp);
+    let (fill, stroke) = if primary {
+        (press.fill(t.accent, t.accent_text, t.accent.lerp_to_gamma(Color32::BLACK, 0.22)), Stroke::NONE)
+    } else {
+        (press.fill(t.card, t.hover, t.pressed), Stroke::new(1.0, t.border))
+    };
+    ui.painter().rect(rect, egui::CornerRadius::same(15), fill, stroke, egui::StrokeKind::Inside);
+    let body = rect.translate(press.offset());
+    let icon_rect = Rect::from_center_size(pos2(body.left() + 16.0, body.center().y), vec2(13.5, 13.5));
+    crate::icons::paint(ui, icon_rect, icon, 13.5, icon_color);
+    ui.painter().galley(pos2(body.left() + 27.0, body.center().y - label_galley.size().y / 2.0), label_galley, text_color);
+    theme::hand(resp)
+}
+
 /// Draw the dialog. `thumb` gives a page's thumbnail texture when there is one. Returns
 /// (print, cancel).
 pub(crate) fn body(
@@ -113,9 +217,20 @@ pub(crate) fn body(
     labels: &[String],
     thumb: &mut dyn FnMut(usize) -> Option<egui::TextureId>,
 ) -> (bool, bool) {
-    ui.set_width(820.0);
-    ui.label(egui::RichText::new(tl!("Print")).font(theme::semibold(18.0)));
-    ui.add_space(8.0);
+    ui.set_width(840.0);
+    let mut close_x = false;
+    ui.horizontal(|ui| {
+        ui.add(crate::icons::image("printer", 20.0, t.accent));
+        ui.label(egui::RichText::new(tl!("Print")).font(theme::semibold(18.0)));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::icons::button(ui, "x", 28.0, false, "Fechar").clicked() {
+                close_x = true;
+            }
+        });
+    });
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(6.0);
     let settings = d.settings(sizes.len(), labels);
     let laid = settings.as_ref().ok().map(|s| print::layout(sizes, s));
     // Creep within its field's range can still be too much for a thick booklet.
@@ -126,22 +241,30 @@ pub(crate) fn body(
     // on a short screen, or with the driver's own Properties… panel expanded below, this row can
     // otherwise grow taller than the display and push the Print/Cancel buttons off both edges.
     // The title and the button row stay outside, so they are always reachable.
-    // `viewport_rect()` is egui's own idea of the current viewport, kept from the latest
-    // `RawInput::screen_rect` it was handed — unlike reading `raw.screen_rect` directly, it
-    // does not go blank on a frame where the backend didn't resend it.
     let screen_h = ui.ctx().input(|i| i.viewport_rect().height());
-    let max_h = (screen_h - 220.0).max(300.0);
-    // The viewport is `max_h` itself, not what the modal offers this frame: when a different
-    // dialog was shown before, the shared modal remeasures from a height of zero (#5118) and
-    // offers less, which would size this area by the dialog shown before. `auto_shrink` still
-    // shrinks it to contents that fit.
-    egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+    let max_h = (screen_h - 195.0).clamp(220.0, 480.0);
+    ui.scope(|ui| {
+        ui.spacing_mut().scroll.floating = false;
+        egui::ScrollArea::vertical().id_salt("print-body-scroll").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
     ui.horizontal_top(|ui| {
-        // Settings.
+        // Settings grouped into clean cards (2.1).
         ui.vertical(|ui| {
-            ui.set_width(470.0);
+            ui.set_width(475.0);
+            let group1_title = if crate::i18n::current().code().starts_with("pt") {
+                "Impressora, Cópias e Papel"
+            } else {
+                tl!("Printer:")
+            };
+            let dx_blue = if t.dark() { Color32::from_rgb(0x38, 0xBD, 0xF8) } else { Color32::from_rgb(0x02, 0x84, 0xC7) };
+            let dx_emerald = if t.dark() { Color32::from_rgb(0x34, 0xD3, 0x99) } else { Color32::from_rgb(0x16, 0xA3, 0x4A) };
+            let dx_amber = if t.dark() { Color32::from_rgb(0xFB, 0xBF, 0x24) } else { Color32::from_rgb(0xD9, 0x77, 0x06) };
+            let dx_indigo = if t.dark() { Color32::from_rgb(0x81, 0x8C, 0xF8) } else { Color32::from_rgb(0x4F, 0x46, 0xE5) };
+            let dx_purple = if t.dark() { Color32::from_rgb(0xC0, 0x84, 0xFC) } else { Color32::from_rgb(0x7C, 0x3A, 0xED) };
+            let dx_slate = if t.dark() { Color32::from_rgb(0x94, 0xA3, 0xB8) } else { Color32::from_rgb(0x47, 0x55, 0x69) };
+
+            group_card(ui, t, "printer", group1_title, |ui| {
             egui::Grid::new("print-top").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                let printer_caption = ui.label(tl!("Printer:"));
+                let printer_caption = icon_label(ui, "printer", dx_blue, tl!("Printer:"));
                 let before = d.printer.clone();
                 // The browser's print dialog sets copies, two-sided printing and colour itself.
                 let browser = d.printer.as_deref() == Some(crate::web_print::BROWSER_PRINTER);
@@ -151,7 +274,7 @@ pub(crate) fn body(
                         None if still_looking(d) => tl!("Looking for printers…").to_string(),
                         None => tl!("Save as PDF").to_string(),
                     };
-                    craft_ui::ComboBox::from_id_salt("printer").selected_text(shown).width(260.0).show_ui(ui, |ui| {
+                    craft_ui::ComboBox::from_id_salt("printer").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                         if d.printers_loading {
                             ui.add_enabled(false, egui::Label::new(tl!("Looking for printers…")));
                         }
@@ -177,7 +300,10 @@ pub(crate) fn body(
                     } else {
                         tl!("The printer driver's own settings for this print: paper tray, paper type, finishing and more.")
                     };
-                    let properties = ui.add_enabled(d.printer.is_some() && !browser, egui::Button::new(tl!("Properties…"))).on_hover_text(tip);
+                    let properties = ui
+                        .add_enabled_ui(d.printer.is_some() && !browser, |ui| icon_button(ui, "sliders-horizontal", dx_indigo, tl!("Properties…")))
+                        .inner
+                        .on_hover_text(tip);
                     if properties.clicked()
                         && let Some(p) = d.printer.clone()
                     {
@@ -219,7 +345,7 @@ pub(crate) fn body(
                     );
                     ui.end_row();
                 }
-                let copies_label = ui.label(tl!("Copies:"));
+                let copies_label = icon_label(ui, "copy", dx_emerald, tl!("Copies:"));
                 ui.add_enabled_ui(!browser, |ui| {
                     ui.horizontal(|ui| {
                         ui.add(egui::DragValue::new(&mut d.copies).range(1..=999)).labelled_by(copies_label.id);
@@ -231,7 +357,7 @@ pub(crate) fn body(
                 // A booklet decides two-sided itself (#2707), so the choice is hidden meanwhile, as
                 // in Acrobat's Print dialog; it is kept for the other layouts.
                 if d.handling != Handling::Booklet {
-                    ui.label(tl!("Two-sided:"));
+                    icon_label(ui, "book-open", dx_indigo, tl!("Two-sided:"));
                     ui.add_enabled_ui(!browser, |ui| {
                         combo(
                             ui,
@@ -249,7 +375,7 @@ pub(crate) fn body(
                     });
                     ui.end_row();
                 }
-                let paper_label = ui.label(tl!("Paper:"));
+                let paper_label = icon_label(ui, "file-text", dx_amber, tl!("Paper:"));
                 d.paper = d.paper.min(d.paper_count().saturating_sub(1));
                 let before = d.paper;
                 let mut paper_clicked = false;
@@ -257,7 +383,7 @@ pub(crate) fn body(
                 ui.horizontal(|ui| {
                     // A standard size's name is translated; a custom paper keeps the name it was given.
                     let shown = if d.paper_is_custom() { d.paper_name().to_string() } else { tl!(&d.paper_name()).to_string() };
-                    craft_ui::ComboBox::from_id_salt("paper").selected_text(shown).width(180.0).show_ui(ui, |ui| {
+                    craft_ui::ComboBox::from_id_salt("paper").selected_text(shown).width(120.0).show_ui(ui, |ui| {
                         if detecting {
                             ui.add_enabled(false, egui::Label::new(tl!("Detecting paper…")));
                         }
@@ -281,13 +407,13 @@ pub(crate) fn body(
                     if detecting {
                         ui.label(egui::RichText::new(tl!("Detecting…")).small().color(t.text_muted));
                     }
-                    if ui.button(tl!("Custom…")).on_hover_text(tl!("Add a paper size of your own to the list")).clicked() {
+                    if icon_button(ui, "ruler", dx_amber, tl!("Custom…")).on_hover_text(tl!("Add a paper size of your own to the list")).clicked() {
                         d.custom_new = match d.custom_new {
                             Some(_) => None,
                             None => Some((String::new(), String::new(), String::new())),
                         };
                     }
-                    if d.paper_is_custom() && ui.button(tl!("Remove")).on_hover_text(tl!("Take this paper size off the list")).clicked() {
+                    if d.paper_is_custom() && icon_button(ui, "trash-2", Color32::from_rgb(0xDC, 0x26, 0x26), tl!("Remove")).on_hover_text(tl!("Take this paper size off the list")).clicked() {
                         d.remove_custom_paper();
                         paper_clicked = true;
                     }
@@ -296,8 +422,19 @@ pub(crate) fn body(
                     } else {
                         tl!("Page setup dialog is not available on this system.")
                     };
+                    let page_setup_label = {
+                        let raw = tl!("Page Setup…");
+                        if raw == "Page Setup…" && crate::i18n::current().code().starts_with("pt") {
+                            "Configurar página…"
+                        } else {
+                            raw
+                        }
+                    };
                     let page_setup = ui
-                        .add_enabled(d.printer.is_some() && !browser && spool::HAS_PRINTER_PREFERENCES, egui::Button::new(tl!("Page Setup…")))
+                        .add_enabled_ui(d.printer.is_some() && !browser && spool::HAS_PRINTER_PREFERENCES, |ui| {
+                            icon_button(ui, "settings", dx_slate, page_setup_label)
+                        })
+                        .inner
                         .on_hover_text(page_setup_tip);
                     if page_setup.clicked()
                         && let Some(p) = d.printer.clone()
@@ -352,9 +489,12 @@ pub(crate) fn body(
             }
             if let Some(&source) = sizes.get(d.current_page) {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(crate::i18n::fmt(tl!("PDF page: {size}"), &[("size", &d.units.size(source.0, source.1))]));
+                    icon_label(ui, "maximize-2", dx_blue, &crate::i18n::fmt(tl!("PDF page: {size}"), &[("size", &d.units.size(source.0, source.1))]));
                     let matched = d.matching_paper(source);
-                    if ui.add_enabled(matched.is_some(), egui::Button::new(tl!("Match page at 100%"))).clicked()
+                    if ui
+                        .add_enabled_ui(matched.is_some(), |ui| icon_button(ui, "maximize", dx_emerald, tl!("Match page at 100%")))
+                        .inner
+                        .clicked()
                         && let Some(paper) = matched
                     {
                         d.paper = paper;
@@ -368,8 +508,10 @@ pub(crate) fn body(
                     }
                 });
             }
-            ui.add_space(6.0);
-            widgets::section_title(ui, tl!("Pages to Print"));
+            }); // end group_card 1 (Printer, Copies & Paper)
+
+            ui.add_space(8.0);
+            group_card(ui, t, "file-text", tl!("Pages to Print"), |ui| {
             ui.horizontal(|ui| {
                 widgets::radio_value(ui, &mut d.which, Which::All, tl!("All"));
                 widgets::radio_value(ui, &mut d.which, Which::Current, tl!("Current page"));
@@ -399,7 +541,7 @@ pub(crate) fn body(
                 widgets::radio_value(ui, &mut d.which, Which::Selected, label);
             }
             ui.horizontal(|ui| {
-                ui.label(tl!("More options:"));
+                icon_label(ui, "filter", dx_indigo, tl!("More options:"));
                 combo(
                     ui,
                     "subset",
@@ -410,19 +552,21 @@ pub(crate) fn body(
                 );
                 ui.add(widgets::checkbox(&mut d.reverse, tl!("Reverse pages")));
             });
-            ui.add_space(6.0);
-            widgets::section_title(ui, tl!("Page Sizing & Handling"));
+            }); // end group_card 2 (Pages to Print)
+
+            ui.add_space(8.0);
+            group_card(ui, t, "maximize-2", tl!("Page Sizing & Handling"), |ui| {
             ui.horizontal_wrapped(|ui| {
-                for (h, label) in [
-                    (Handling::Size, tl!("Size")),
-                    (Handling::Poster, tl!("Poster")),
-                    (Handling::Multiple, tl!("Multiple")),
-                    (Handling::Booklet, tl!("Booklet")),
-                    (Handling::Label, tl!("Label")),
+                for (h, icon, color, label) in [
+                    (Handling::Size, "maximize-2", dx_blue, tl!("Size")),
+                    (Handling::Poster, "layout-grid", dx_amber, tl!("Poster")),
+                    (Handling::Multiple, "files", dx_indigo, tl!("Multiple")),
+                    (Handling::Booklet, "book-open", dx_emerald, tl!("Booklet")),
+                    (Handling::Label, "tag", dx_purple, tl!("Label")),
                 ] {
                     // A selected area prints only with Size.
                     let offered = d.which != Which::Area || h == Handling::Size;
-                    if ui.add_enabled_ui(offered, |ui| widgets::mode_tab(ui, label, d.handling == h)).inner.clicked() {
+                    if ui.add_enabled_ui(offered, |ui| icon_mode_tab(ui, icon, color, label, d.handling == h)).inner.clicked() {
                         d.set_handling(h);
                     }
                 }
@@ -542,13 +686,15 @@ pub(crate) fn body(
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.label(tl!("Orientation:"));
+                icon_label(ui, "compass", dx_blue, tl!("Orientation:"));
                 widgets::radio_value(ui, &mut d.orientation, Orientation::Auto, tl!("Auto portrait/landscape"));
                 widgets::radio_value(ui, &mut d.orientation, Orientation::Portrait, tl!("Portrait"));
                 widgets::radio_value(ui, &mut d.orientation, Orientation::Landscape, tl!("Landscape"));
             });
-            ui.add_space(6.0);
-            widgets::section_title(ui, tl!("Comments & Forms"));
+            }); // end group_card 3 (Page Sizing & Handling)
+
+            ui.add_space(8.0);
+            group_card(ui, t, "sliders-horizontal", tl!("Comments & Forms"), |ui| {
             combo(
                 ui,
                 "content",
@@ -564,34 +710,46 @@ pub(crate) fn body(
             );
             // Advanced (Acrobat's Advanced Print Setup): print as image. Folded unless it is on.
             ui.add_space(6.0);
-            egui::CollapsingHeader::new(egui::RichText::new(crate::i18n::upper_label("Advanced")).font(theme::semibold(10.5)).color(t.text_faint))
-                .id_salt("print-advanced")
-                .default_open(d.as_image)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(widgets::checkbox(&mut d.as_image, tl!("Print as image")));
-                        ui.add_enabled_ui(d.as_image, |ui| {
-                            ui.label(tl!("Resolution:"));
-                            let mut dpi = d.dpi.round() as u32;
-                            combo(ui, "print-dpi", tl!("Resolution:"), &mut dpi, &[(150, "150 dpi"), (300, "300 dpi"), (600, "600 dpi")], 100.0);
-                            d.dpi = f64::from(dpi);
+            ui.horizontal(|ui| {
+                crate::icons::paint_inline(ui, "settings-2", 12.5, dx_slate);
+                ui.vertical(|ui| {
+                    egui::CollapsingHeader::new(egui::RichText::new(crate::i18n::upper_label("Advanced")).font(theme::semibold(10.5)).color(t.text_faint))
+                        .id_salt("print-advanced")
+                        .default_open(d.as_image)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(widgets::checkbox(&mut d.as_image, tl!("Print as image")));
+                                ui.add_enabled_ui(d.as_image, |ui| {
+                                    ui.label(tl!("Resolution:"));
+                                    let mut dpi = d.dpi.round() as u32;
+                                    combo(ui, "print-dpi", tl!("Resolution:"), &mut dpi, &[(150, "150 dpi"), (300, "300 dpi"), (600, "600 dpi")], 100.0);
+                                    d.dpi = f64::from(dpi);
+                                });
+                            });
+                            ui.label(
+                                egui::RichText::new(tl!(
+                                    "Use it when a printer skips text, shading or transparency. The print is no longer searchable text; with Print in grayscale, the pictures are grey."
+                                ))
+                                .small()
+                                .color(t.text_muted),
+                            );
                         });
-                    });
-                    ui.label(
-                        egui::RichText::new(tl!(
-                            "Use it when a printer skips text, shading or transparency. The print is no longer searchable text; with Print in grayscale, the pictures are grey."
-                        ))
-                        .small()
-                        .color(t.text_muted),
-                    );
                 });
+            });
+            }); // end group_card 4 (Comments & Forms + Advanced)
         });
-        ui.add_space(12.0);
-        // Preview.
+        ui.add_space(10.0);
+        // Preview in its own group panel.
         ui.vertical(|ui| {
-            ui.set_width(PREVIEW_W);
+            ui.set_width(PREVIEW_W + 24.0);
+            let preview_title = if crate::i18n::current().code().starts_with("pt") {
+                "Pré-visualização da Folha"
+            } else {
+                "Preview"
+            };
+            group_card(ui, t, "eye", preview_title, |ui| {
             let (area, _) = ui.allocate_exact_size(vec2(PREVIEW_W, PREVIEW_H), egui::Sense::hover());
-            ui.painter().rect_filled(area, 6.0, t.hover);
+            ui.painter().rect_filled(area, 6.0, t.card);
             match (&settings, sheets.get(d.sheet)) {
                 (Err(e), _) => {
                     ui.put(area.shrink(16.0), egui::Label::new(egui::RichText::new(tl!(e)).color(t.text_muted)).wrap());
@@ -688,23 +846,32 @@ pub(crate) fn body(
                     }
                 }
             }
+            }); // end group_card 5 (Preview)
         });
     });
     }); // end ScrollArea (#4252, #5317)
-    ui.add_space(12.0);
-    let (mut go, mut cancel) = (false, false);
+    }); // end scroll scope
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(8.0);
+    let (mut go, mut cancel) = (false, close_x);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let looking = still_looking(d);
         let waiting_paper = d.papers_loading();
         let label = if d.printer.is_some() || looking { tl!("Print") } else { tl!("Save as PDF") };
+        let go_icon = if d.printer.is_some() || looking { "printer" } else { "save" };
         if ui
-            .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && !waiting_paper, |ui| widgets::pill_button(ui, label, true))
+            .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && !waiting_paper, |ui| {
+                icon_pill_button(ui, go_icon, Color32::WHITE, label, true)
+            })
             .inner
             .clicked()
         {
             go = true;
         }
-        if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
+        let close_label = if crate::i18n::current().code().starts_with("pt") { "Fechar" } else { tl!("Cancel") };
+        let close_icon_color = if t.dark() { Color32::from_rgb(0xF8, 0x71, 0x71) } else { Color32::from_rgb(0xDC, 0x26, 0x26) };
+        if icon_pill_button(ui, "x", close_icon_color, close_label, false).clicked() {
             cancel = true;
         }
     });

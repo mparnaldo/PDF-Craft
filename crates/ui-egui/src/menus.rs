@@ -21,7 +21,7 @@ use crate::{PdfCraftApp, RightPanel};
 pub(super) mod tab_context;
 
 /// The app's name in the menus the layouts write (About, Hide, Quit).
-pub(crate) const APP_NAME: &str = "PdfCraft";
+pub(crate) const APP_NAME: &str = "PDF Craft";
 
 /// The top bar's width after the menus: the mode tabs, the search box and the buttons.
 const ROW_AFTER_MENUS: f32 = 720.0;
@@ -46,6 +46,7 @@ const ZOOM_IN: &str = "view.zoom.in";
 const ZOOM_OUT: &str = "view.zoom.out";
 const ROTATE_CW: &str = "view.rotate.cw";
 const ROTATE_CCW: &str = "view.rotate.ccw";
+const THEME_GALLERY: &str = "view.theme.gallery";
 
 /// The menu-only items: id, English label and the shortcut shown (the keys stay with the view).
 const EXTRA: &[(&str, &str, Option<Shortcut>)] = &[
@@ -62,6 +63,7 @@ const EXTRA: &[(&str, &str, Option<Shortcut>)] = &[
     (ZOOM_OUT, "Zoom out", Some(crate::commands::ZOOM_OUT)),
     (ROTATE_CW, "Rotate view clockwise", Some(crate::commands::ROTATE_CW)),
     (ROTATE_CCW, "Rotate view counterclockwise", Some(crate::commands::ROTATE_CCW)),
+    (THEME_GALLERY, "Mais temas profissionais…", None),
 ];
 
 /// View ▸ Side panels: the panel, its id in [`PANEL`] commands and its English label.
@@ -259,6 +261,239 @@ fn english(labeled: Labeled<'_>) -> Option<String> {
     }
 }
 
+/// DevExpress-style minimalist semantic icon and accent color for menu items and submenus.
+fn menu_icon_spec(labeled: Labeled<'_>, dark: bool) -> Option<(&'static str, egui::Color32)> {
+    let blue = if dark { egui::Color32::from_rgb(0x38, 0xBD, 0xF8) } else { egui::Color32::from_rgb(0x02, 0x84, 0xC7) };
+    let emerald = if dark { egui::Color32::from_rgb(0x34, 0xD3, 0x99) } else { egui::Color32::from_rgb(0x16, 0xA3, 0x4A) };
+    let amber = if dark { egui::Color32::from_rgb(0xFB, 0xBF, 0x24) } else { egui::Color32::from_rgb(0xD9, 0x77, 0x06) };
+    let indigo = if dark { egui::Color32::from_rgb(0x81, 0x8C, 0xF8) } else { egui::Color32::from_rgb(0x4F, 0x46, 0xE5) };
+    let purple = if dark { egui::Color32::from_rgb(0xC0, 0x84, 0xFC) } else { egui::Color32::from_rgb(0x7C, 0x3A, 0xED) };
+    let crimson = if dark { egui::Color32::from_rgb(0xF8, 0x71, 0x71) } else { egui::Color32::from_rgb(0xDC, 0x26, 0x26) };
+    let slate = if dark { egui::Color32::from_rgb(0x94, 0xA3, 0xB8) } else { egui::Color32::from_rgb(0x47, 0x55, 0x69) };
+
+    match labeled {
+        Labeled::Title(shown) => {
+            let eng = TITLES.iter().find(|&&t| tl!(t) == shown || crate::i18n::menu_label("file.open_recent", t) == shown || t == shown).copied();
+            match eng {
+                Some("Open Recent") => Some(("clock-3", blue)),
+                Some("Create") => Some(("file-plus-2", emerald)),
+                Some("Export") => Some(("file-output", blue)),
+                Some("Protect") => Some(("shield-check", emerald)),
+                Some("Pages") => Some(("files", indigo)),
+                Some("Zoom") => Some(("zoom-in", blue)),
+                Some("Rotate view") => Some(("rotate-cw", blue)),
+                Some("Page navigation") => Some(("compass", indigo)),
+                Some("Page display") => Some(("book-open", blue)),
+                Some("Side panels") => Some(("panels-top-left", indigo)),
+                Some("Display theme") => Some(("palette", purple)),
+                Some("Tools") => Some(("wrench", indigo)),
+                Some("Fill & Sign") => Some(("pen-line", purple)),
+                Some("File") => Some(("folder-open", amber)),
+                Some("Edit") => Some(("pencil", blue)),
+                Some("View") => Some(("eye", indigo)),
+                Some("Sign") => Some(("signature", purple)),
+                Some("Window") => Some(("app-window", blue)),
+                Some("Help") => Some(("circle-help", emerald)),
+                _ => TOOL_GROUPS.iter().find(|g| tl!(g.label) == shown || g.label == shown).map(|g| (g.icon, indigo)),
+            }
+        }
+        Labeled::Command(cmd) => match cmd.id.as_str() {
+            // 4.1 Menu Arquivo (File) & Submenus
+            "create.blank" => Some(("file-plus", emerald)),
+            "file.open" => Some(("folder-open", amber)),
+            "file.open_recent" => Some(("file-text", blue)),
+            NO_RECENT => Some(("clock", slate)),
+            "file.clear_recent" => Some(("trash-2", crimson)),
+            "file.pin_folder" => Some(("folder-plus", amber)),
+            "page.combine" => Some(("files", indigo)),
+            "create.file" => Some(("file-plus", emerald)),
+            "create.multiple" => Some(("files", emerald)),
+            "create.multiple_separate" => Some(("folder-plus", emerald)),
+            "create.images" => Some(("image-plus", purple)),
+            "create.clipboard" => Some(("clipboard-paste", blue)),
+            "file.save" => Some(("save", blue)),
+            "file.save_as" => Some(("file-down", indigo)),
+            "file.revert" => Some(("rotate-ccw", amber)),
+            "file.close" => Some(("file-x", crimson)),
+            "file.close_all" => Some(("x", crimson)),
+            "optimize.reduce" => Some(("gauge", emerald)),
+            "optimize.advanced" => Some(("sliders-horizontal", indigo)),
+            "export.docx" => Some(("file-text", blue)),
+            "export.pptx" => Some(("presentation", amber)),
+            "export.rtf" => Some(("file-pen-line", indigo)),
+            "export.html" => Some(("code-xml", emerald)),
+            "export.text" => Some(("align-left", slate)),
+            "export.image" => Some(("image", purple)),
+            "export.all_images" => Some(("layout-grid", purple)),
+            "protect.password" => Some(("lock", amber)),
+            "protect.remove" => Some(("eraser", crimson)),
+            "protect.unlock" => Some(("lock-open", emerald)),
+            "protect.properties" => Some(("file-lock-2", blue)),
+            "file.properties" => Some(("info", blue)),
+            "file.word_count" => Some(("hash", indigo)),
+            "print.dialog" => Some(("printer", blue)),
+            "app.quit" => Some(("circle-x", crimson)),
+
+            // 4.2 Menu Editar (Edit) & Submenus
+            "edit.undo" => Some(("undo-2", blue)),
+            "edit.redo" => Some(("redo-2", blue)),
+            CUT => Some(("scissors", amber)),
+            "edit.copy" => Some(("copy", blue)),
+            PASTE => Some(("clipboard-paste", emerald)),
+            DELETE => Some(("trash-2", crimson)),
+            "comment.copy" => Some(("message-square-quote", blue)),
+            "comment.paste" => Some(("message-square-plus", emerald)),
+            SELECT_ALL => Some(("text-select", indigo)),
+            "page.organize" => Some(("layout-grid", indigo)),
+            "page.insert_blank" => Some(("file-plus", emerald)),
+            "page.insert" => Some(("file-input", emerald)),
+            "page.replace" => Some(("replace", amber)),
+            "page.extract" => Some(("file-output", blue)),
+            "page.split" => Some(("scissors", amber)),
+            "page.duplicate" => Some(("copy-plus", emerald)),
+            "page.delete" => Some(("file-minus", crimson)),
+            "page.rotate" => Some(("rotate-cw", blue)),
+            "page.rotate_ccw" => Some(("rotate-ccw", blue)),
+            "page.rotate_dialog" => Some(("compass", indigo)),
+            "page.reverse" => Some(("arrow-up-down", indigo)),
+            "page.crop" => Some(("crop", amber)),
+            "page.boxes" => Some(("square-dashed", indigo)),
+            "page.number" => Some(("list-ordered", blue)),
+            "page.properties" => Some(("settings-2", slate)),
+            "bookmark.add" => Some(("bookmark-plus", amber)),
+            "bookmark.from_structure" => Some(("list", blue)),
+            "bookmark.from_text_styles" => Some(("heading", indigo)),
+            "edit.find" => Some(("search", blue)),
+            "edit.replace" => Some(("replace", amber)),
+            "edit.advanced_search" => Some(("file-search", indigo)),
+            "edit.column_select" => Some(("columns-2", blue)),
+            "edit.snapshot" => Some(("camera", purple)),
+            "edit.attach" => Some(("paperclip", emerald)),
+            "form.clear" => Some(("eraser", crimson)),
+            "app.preferences" => Some(("settings", slate)),
+
+            // 4.3 Menu Exibir (View) & Submenus
+            ACTUAL_SIZE => Some(("maximize", blue)),
+            PAGE_LEVEL => Some(("file-text", blue)),
+            FIT_WIDTH => Some(("move-horizontal", indigo)),
+            FIT_HEIGHT => Some(("arrow-up-down", indigo)),
+            "view.fit_visible" => Some(("eye", emerald)),
+            ZOOM_IN => Some(("zoom-in", emerald)),
+            ZOOM_OUT => Some(("zoom-out", amber)),
+            "view.marquee_zoom" => Some(("square-dashed-mouse-pointer", indigo)),
+            ROTATE_CW => Some(("rotate-cw", blue)),
+            ROTATE_CCW => Some(("rotate-ccw", blue)),
+            "view.page.first" => Some(("chevrons-left", blue)),
+            "view.page.prev" => Some(("chevron-left", blue)),
+            "view.page.next" => Some(("chevron-right", blue)),
+            "view.page.last" => Some(("chevrons-right", blue)),
+            "view.focus_page_input" => Some(("hash", indigo)),
+            "view.previous_view" => Some(("undo-2", slate)),
+            "view.next_view" => Some(("redo-2", slate)),
+            "view.layout.single" => Some(("file-text", blue)),
+            "view.layout.two_up" => Some(("columns-2", indigo)),
+            "view.continuous" => Some(("rows-3", blue)),
+            "view.page_gaps" => Some(("move", slate)),
+            "view.layout.cover" => Some(("book-open", amber)),
+            "view.fit_width_scrolling" => Some(("move-horizontal", emerald)),
+            "view.fit_one_page" => Some(("maximize-2", blue)),
+            "view.side_panel" => Some(("panel-right", indigo)),
+            "view.tools_pane" => Some(("panel-left", indigo)),
+            "view.split" => Some(("columns-2", blue)),
+            PANEL => match cmd.params.get("panel").and_then(serde_json::Value::as_str) {
+                Some("comments") => Some(("message-square", amber)),
+                Some("bookmarks") => Some(("bookmark", blue)),
+                Some("pages") => Some(("files", indigo)),
+                Some("fields") => Some(("text-cursor-input", emerald)),
+                Some("layers") => Some(("layers", purple)),
+                Some("attachments") => Some(("paperclip", blue)),
+                Some("signatures") => Some(("signature", indigo)),
+                Some("accessibility") => Some(("accessibility", emerald)),
+                Some("tags") => Some(("tag", amber)),
+                Some("search") => Some(("search", blue)),
+                Some("compare") => Some(("git-compare", purple)),
+                _ => Some(("panel-right", indigo)),
+            },
+            "comment.list" => Some(("message-square-text", amber)),
+            "form.fields" => Some(("list-checks", emerald)),
+            "ui.dock.reset" => Some(("rotate-ccw", slate)),
+            "view.full_screen" => Some(("maximize", blue)),
+            "view.read_mode" => Some(("book-open", emerald)),
+            crate::viewer_prefs::TOGGLE => Some(("eye", indigo)),
+            "view.theme.system" => Some(("monitor", blue)),
+            "view.theme.light" => Some(("sun", amber)),
+            "view.theme.dark" => Some(("moon", indigo)),
+            THEME_GALLERY => Some(("swatch-book", purple)),
+            "view.palette" => Some(("search", blue)),
+
+            // Sign, Window, Help & Tools
+            "sign.fill.text" => Some(("type", blue)),
+            "sign.fill.check" => Some(("check", emerald)),
+            "sign.fill.cross" => Some(("x", crimson)),
+            "sign.fill.dot" => Some(("circle-dot", indigo)),
+            "sign.fill.line" => Some(("minus", slate)),
+            "sign.fill.date" => Some(("clock", amber)),
+            "sign.fill.signature" => Some(("signature", purple)),
+            "sign.fill.initials" => Some(("pen-line", indigo)),
+            "sign.digital" | "sign.certify" | "sign.certify_invisible" => Some(("badge-check", emerald)),
+            "form.add.signature" => Some(("pen-tool", purple)),
+            "sign.validate" => Some(("shield-check", emerald)),
+            "sign.panel" => Some(("signature", blue)),
+            "view.next_tab" => Some(("chevron-right", blue)),
+            "view.previous_tab" => Some(("chevron-left", blue)),
+            DOCUMENT => Some(("file-text", blue)),
+            "help.shortcuts" => Some(("circle-help", blue)),
+            "help.app_page" | "help.website" => Some(("globe", blue)),
+            "help.github" => Some(("code-xml", slate)),
+            "help.discord" => Some(("messages-square", indigo)),
+            "help.check_updates" => Some(("cloud-upload", emerald)),
+            "help.about" => Some(("info", purple)),
+            other => {
+                if other.starts_with("ocr.") || other.starts_with("scan.") {
+                    Some(("scan-text", emerald))
+                } else if other.starts_with("redact.") {
+                    Some(("eraser", crimson))
+                } else if other.starts_with("comment.") {
+                    Some(("message-square", amber))
+                } else if other.starts_with("form.") {
+                    Some(("list-checks", indigo))
+                } else if other.starts_with("measure.") {
+                    Some(("ruler", blue))
+                } else if other.starts_with("a11y.") || other.starts_with("tags.") {
+                    Some(("accessibility", emerald))
+                } else if other.starts_with("edit.") {
+                    Some(("pencil", blue))
+                } else {
+                    Some(("wrench", slate))
+                }
+            }
+        },
+    }
+}
+
+fn paint_menu_row_icon(ui: &mut egui::Ui, row_rect: egui::Rect, labeled: Labeled<'_>, enabled: bool) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let pad_x = ui.spacing().button_padding.x;
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(row_rect.left() + pad_x + 8.0, row_rect.center().y), egui::vec2(15.0, 15.0));
+
+    if let Labeled::Command(cmd) = labeled
+        && cmd.id == "file.open_recent"
+        && let Some(tex) = crate::widgets::load_png_texture(
+            ui.ctx(),
+            "pdfcraft-mark-32",
+            include_bytes!("../../../assets/app-icon/hicolor/32x32/apps/ai.storyteller.pdfcraft.png"),
+        )
+    {
+        let tint = if enabled { egui::Color32::WHITE } else { egui::Color32::from_white_alpha(100) };
+        ui.painter().image(tex.id(), icon_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+        return;
+    }
+
+    let Some((icon_name, color)) = menu_icon_spec(labeled, t.dark()) else { return };
+    let tint = if enabled { color } else { t.text_faint.gamma_multiply(0.65) };
+    crate::icons::paint(ui, icon_rect, icon_name, 14.0, tint);
+}
+
 fn translate(english: &'static str) -> String {
     // craft_menu's bar writes "⋯" (U+22EF, MIDLINE HORIZONTAL ELLIPSIS) itself, for the menu of
     // titles that don't fit: a sentinel to translate, not an English phrase, and the only one of
@@ -361,7 +596,10 @@ impl PdfCraftApp {
         view.extend(list(PANE_COMMANDS, &mut used));
         view.push(Node::Separator);
         view.extend(list(MODES, &mut used));
-        view.push(Node::submenu(tl!("Display theme"), list(THEMES, &mut used)));
+        let mut theme_nodes = list(THEMES, &mut used);
+        theme_nodes.push(Node::Separator);
+        theme_nodes.push(self.menu_item(THEME_GALLERY, Some("Mais temas profissionais…")));
+        view.push(Node::submenu(tl!("Display theme"), theme_nodes));
         view.push(Node::Separator);
         view.push(Node::submenu(tl!("Tools"), self.tools_menu(&used)));
         view.extend(list(&["view.palette"], &mut used));
@@ -501,6 +739,7 @@ impl PdfCraftApp {
                 SELECT_ALL | DELETE => has_doc,
                 ACTUAL_SIZE | PAGE_LEVEL | FIT_WIDTH | FIT_HEIGHT | ZOOM_IN | ZOOM_OUT | ROTATE_CW | ROTATE_CCW => has_doc,
                 PANEL => panel(command).is_some(),
+                THEME_GALLERY => true,
                 id => enabled_id(id),
             };
         let checked = match command.id.as_str() {
@@ -514,9 +753,9 @@ impl PdfCraftApp {
             "view.side_panel" => Some(self.right.is_some()),
             "view.tools_pane" => Some(self.left_open),
             "view.split" => Some(self.panes.split.is_some()),
-            "view.theme.system" => Some(self.theme_preference == ThemePreference::System),
-            "view.theme.light" => Some(self.theme_preference == ThemePreference::Light),
-            "view.theme.dark" => Some(self.theme_preference == ThemePreference::Dark),
+            "view.theme.system" => Some(self.theme_preference == ThemePreference::System && self.executive_theme.is_none()),
+            "view.theme.light" => Some(self.theme_preference == ThemePreference::Light && self.executive_theme.is_none()),
+            "view.theme.dark" => Some(self.theme_preference == ThemePreference::Dark && self.executive_theme.is_none()),
             PANEL => Some(panel(command).is_some_and(|p| self.right == Some(p))),
             _ => None,
         };
@@ -557,6 +796,7 @@ impl PdfCraftApp {
             SELECT_ALL => self.menu_input.extend(key(egui::Key::A, egui::Modifiers::COMMAND)),
             DELETE => self.menu_input.extend(key(egui::Key::Delete, egui::Modifiers::NONE)),
             PANEL => self.choose_right_panel(panel(command)),
+            THEME_GALLERY => self.themes_gallery_open = true,
             ACTUAL_SIZE | PAGE_LEVEL | FIT_WIDTH | FIT_HEIGHT | ZOOM_IN | ZOOM_OUT | ROTATE_CW | ROTATE_CCW => {
                 let Some(v) = self.active.and_then(|i| self.views.get_mut(i)) else { return };
                 match command.id.as_str() {
@@ -591,10 +831,14 @@ impl PdfCraftApp {
         // The mode tabs, search and buttons follow the bar in the same row: it takes its titles'
         // width, less when the row is short, where the menus that don't fit move into its "⋯".
         let fit = (ui.available_width() - ROW_AFTER_MENUS).max(MIN_MENUS_WIDTH);
+        let mut style = craft_menu::bar::BarStyle::from_style(ui.style());
+        style.title_color = crate::theme::Tokens::get(&ctx).for_menubar().text;
         let chosen = craft_menu::MenuBarUi::new(&bar)
             .gate(gate)
+            .style(style)
             .label(&translate)
             .english(&english)
+            .row_icon(&paint_menu_row_icon)
             .id(egui::Id::unique("pdfcraft-menu-bar"))
             .shrink_to_fit(fit)
             .show(ui);

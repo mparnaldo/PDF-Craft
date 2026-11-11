@@ -245,6 +245,16 @@ impl OcrPage {
     pub fn suspects(&self) -> Vec<usize> {
         self.words.iter().enumerate().filter(|(_, w)| pdfcraft_ocr::is_suspect(w.confidence)).map(|(i, _)| i).collect()
     }
+
+    /// Clockwise rotation in degrees (0, 90, 180, 270) detected during preprocessing.
+    pub fn rotation_degrees(&self) -> i64 {
+        self.notes.iter().find_map(|n| n.strip_prefix("Auto-rotated page by ")?.strip_suffix('°')?.parse::<i64>().ok()).unwrap_or(0)
+    }
+
+    /// Clockwise deskew correction angle in degrees detected during preprocessing.
+    pub fn skew_degrees(&self) -> f64 {
+        self.notes.iter().find_map(|n| n.strip_prefix("Deskewed page by ")?.strip_suffix('°')?.parse::<f64>().ok()).unwrap_or(0.0)
+    }
 }
 
 /// The engines a job reads with: one primary and, for ensemble strategies, an optional
@@ -831,6 +841,7 @@ impl OcrSteps {
             },
         )
         .map_err(|e| skip(&e.to_string()))?;
+        let full_page = settings.region.is_none();
         Ok(OcrShot {
             page,
             image: Some(pre.image),
@@ -842,6 +853,8 @@ impl OcrSteps {
             strategy: settings.strategy,
             options: pdfcraft_ocr::RecognizeOptions { language: settings.language.clone() },
             output_mode: settings.output_mode,
+            rotation_degrees: if full_page { pre.rotation_degrees } else { 0 },
+            skew_degrees: if full_page { pre.skew_degrees } else { 0.0 },
         })
     }
 }
@@ -865,6 +878,8 @@ pub struct OcrShot {
     strategy: MergeStrategy,
     options: pdfcraft_ocr::RecognizeOptions,
     output_mode: OutputMode,
+    rotation_degrees: i64,
+    skew_degrees: f64,
 }
 
 impl OcrShot {
@@ -931,6 +946,12 @@ impl OcrShot {
         });
         let words = fresh.into_iter().map(|w| PlacedWord::place(w, to_user)).collect::<Vec<_>>();
         let mut notes = outcome.notes;
+        if self.rotation_degrees != 0 {
+            notes.push(format!("Auto-rotated page by {}°", self.rotation_degrees));
+        }
+        if self.skew_degrees.abs() >= 0.1 {
+            notes.push(format!("Deskewed page by {:.2}°", -self.skew_degrees));
+        }
         // Only visible editable output needs display glyphs. Searchable output preserves
         // every Unicode character with empty Type3 programs and ToUnicode maps.
         if self.output_mode == OutputMode::EditableText && !words.is_empty() {
@@ -1007,8 +1028,23 @@ impl Session {
 
     /// Add the words found by [`OcrJob::run`] as one undoable step. Returns the number of words.
     pub fn apply_ocr(&mut self, id: DocId, found: &[OcrPage]) -> Result<usize, EditError> {
-        let edits: Vec<Edit> =
-            found.iter().filter(|p| !p.words.is_empty()).map(|p| Edit::AddOcrText { page: p.page, words: p.words.clone() }).collect();
+        let mut edits: Vec<Edit> = Vec::new();
+        for p in found {
+            if !p.words.is_empty() {
+                edits.push(Edit::AddOcrText { page: p.page, words: p.words.clone() });
+            }
+            let skew = p.skew_degrees();
+            if skew.abs() >= 0.1 {
+                let img_count = self.get(id).map_or(0, |d| d.page_images(p.page).len());
+                for index in 0..img_count {
+                    edits.push(Edit::EditPageImage { page: p.page, index, change: crate::ImageEdit::RotateBy(skew) });
+                }
+            }
+            let rot = p.rotation_degrees();
+            if rot != 0 {
+                edits.push(Edit::RotatePages { pages: vec![p.page], degrees: rot });
+            }
+        }
         let words = found.iter().map(|p| p.words.len()).sum();
         if !edits.is_empty() {
             self.apply(id, Edit::Batch { label: "Recognize text".into(), edits })?;
@@ -1270,7 +1306,9 @@ impl FileJob {
 
     /// Add the words found and save: the searchable file, or the original when nothing was found.
     pub fn finish(mut self, pages: Vec<OcrPage>) -> Result<FileResult, String> {
-        if self.session.apply_ocr(self.id, &pages).map_err(|e| e.to_string())? == 0 {
+        let geom_changed = pages.iter().any(|p| p.rotation_degrees() != 0 || p.skew_degrees().abs() >= 0.1);
+        let words = self.session.apply_ocr(self.id, &pages).map_err(|e| e.to_string())?;
+        if words == 0 && !geom_changed {
             return Ok(FileResult { bytes: self.bytes, pages, file_skipped: None });
         }
         // Checked like a save before the caller writes it (#2166).

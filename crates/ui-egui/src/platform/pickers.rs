@@ -50,6 +50,8 @@ pub(crate) enum Ask {
     Files(rfd::AsyncFileDialog),
     /// Choose a folder.
     Folder(rfd::AsyncFileDialog),
+    /// Choose one or more folders.
+    Folders(rfd::AsyncFileDialog),
     /// Choose where to save a file.
     Save(rfd::AsyncFileDialog),
 }
@@ -226,6 +228,15 @@ impl PdfCraftApp {
             Ask::Folder(d) => {
                 let pick = d.pick_folder();
                 self.pickers.spawn(target, ctx, async move { one(pick.await) }, then)
+            }
+            Ask::Folders(d) => {
+                let pick = d.pick_folders();
+                self.pickers.spawn(
+                    target,
+                    ctx,
+                    async move { pick.await.unwrap_or_default().into_iter().map(|h| h.path().to_path_buf()).collect() },
+                    then,
+                )
             }
             Ask::Save(d) => {
                 let pick = d.save_file();

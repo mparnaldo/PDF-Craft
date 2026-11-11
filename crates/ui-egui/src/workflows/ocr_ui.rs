@@ -11,6 +11,9 @@ use pdfcraft_engine::ocr::{EngineChoice, LANGUAGES, MergeStrategy, OcrPage, OcrS
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 
+/// Languages shown in the Recognize Text dialog, including Brazilian Portuguese.
+pub const UI_LANGUAGES: &[(&str, &str)] = &[("pt", "Português (Brasil)"), ("en", "English"), ("es", "Español"), ("ja", "Japanese")];
+
 /// Which pages to read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OcrPages {
@@ -53,6 +56,12 @@ pub struct OcrDraft {
     /// Batch: where the searchable copies go (None: ask each time). Remembered from the last
     /// batch's folder pick, so a repeated export into the same place does not re-ask.
     pub output_folder: Option<String>,
+    /// Save directly in the same folder as original (in-place overwrite).
+    pub overwrite_original: bool,
+    /// Whether the dialog is in multi-file / folder batch mode.
+    pub batch_mode: bool,
+    /// Queued PDF paths for batch OCR when launched from the dialog.
+    pub batch_paths: Vec<std::path::PathBuf>,
 }
 
 impl Default for OcrDraft {
@@ -61,13 +70,13 @@ impl Default for OcrDraft {
             pages: OcrPages::All,
             from: 1,
             to: 1,
-            language: "en".into(),
+            language: "pt".into(),
             dpi: 300,
             text_pages: false,
             engine: EngineChoice::default(),
             strategy: MergeStrategy::default(),
-            auto_rotate: false,
-            deskew: false,
+            auto_rotate: true,
+            deskew: true,
             denoise: false,
             binarize: false,
             output_mode: OutputMode::default(),
@@ -75,6 +84,9 @@ impl Default for OcrDraft {
             skip_text_pages: true,
             force_ocr: false,
             output_folder: None,
+            overwrite_original: false,
+            batch_mode: false,
+            batch_paths: Vec::new(),
         }
     }
 }
@@ -82,9 +94,15 @@ impl Default for OcrDraft {
 impl OcrDraft {
     /// The recognition settings these choices make.
     pub fn settings(&self) -> OcrSettings {
+        let engine_lang = match (self.language.as_str(), self.engine) {
+            ("pt", EngineChoice::Tesseract) => "por".to_string(),
+            ("es", EngineChoice::Tesseract) => "spa".to_string(),
+            ("pt" | "es", _) => "en".to_string(),
+            (other, _) => other.to_string(),
+        };
         OcrSettings {
             dpi: self.dpi as f32,
-            language: self.language.clone(),
+            language: engine_lang,
             engine: self.engine,
             strategy: self.strategy,
             auto_rotate: self.auto_rotate,
@@ -102,7 +120,7 @@ impl OcrDraft {
     /// Restore from the preferences JSON (`ocr` object); unknown or malformed values keep the
     /// defaults, like every other restored setting.
     pub fn apply_pref(&mut self, v: &serde_json::Value) {
-        if let Some(l) = v["language"].as_str().filter(|l| LANGUAGES.iter().any(|x| x.0 == *l)) {
+        if let Some(l) = v["language"].as_str().filter(|l| UI_LANGUAGES.iter().any(|x| x.0 == *l) || LANGUAGES.iter().any(|x| x.0 == *l)) {
             self.language = l.to_string();
         }
         if let Some(e) = v["engine"].as_str() {
@@ -140,6 +158,9 @@ impl OcrDraft {
         if let Some(f) = v["output_folder"].as_str().filter(|f| !f.is_empty()) {
             self.output_folder = Some(f.to_string());
         }
+        if let Some(on) = v["overwrite_original"].as_bool() {
+            self.overwrite_original = on;
+        }
     }
 
     /// The preferences JSON for `persist`.
@@ -161,6 +182,7 @@ impl OcrDraft {
             "skip_text_pages": self.skip_text_pages,
             "force_ocr": self.force_ocr,
             "output_folder": self.output_folder,
+            "overwrite_original": self.overwrite_original,
         })
     }
 }
@@ -180,7 +202,12 @@ pub struct OcrProgress {
 pub struct BatchProgress {
     pub done: usize,
     pub total: usize,
+    pub current_file: String,
+    pub current_page: usize,
+    pub total_pages: usize,
+    pub logs: Vec<String>,
     pub message: Option<String>,
+    pub finished: bool,
     pub cancel: bool,
 }
 
@@ -234,12 +261,35 @@ pub(crate) fn keep_asking_while_probing(ctx: &egui::Context) {
 }
 
 pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (bool, bool) {
+    let has_open_doc = app.active_ids().is_some();
     let pages = app.active_ids().and_then(|(_, id)| app.session.get(id)).map_or(1, |d| d.info.pages.len().max(1));
+    if !has_open_doc {
+        app.ocr_draft.batch_mode = true;
+    }
+    let mut pick_batch_files = false;
+    let mut pick_batch_folders = false;
+    let mut pick_output_folder = false;
     let d = &mut app.ocr_draft;
     d.to = d.to.clamp(1, pages);
     d.from = d.from.clamp(1, d.to);
-    ui.label(egui::RichText::new(tl!("Recognize Text")).font(theme::semibold(18.0)));
-    ui.add_space(8.0);
+
+    // Cabeçalho fixado no topo
+    ui.label(egui::RichText::new(tl!("Reconhecer Texto (OCR)")).font(theme::semibold(18.0)));
+    ui.add_space(6.0);
+
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(has_open_doc, |ui| {
+            if ui.selectable_label(!d.batch_mode, "📄 Neste Documento").clicked() {
+                d.batch_mode = false;
+            }
+        });
+        if ui.selectable_label(d.batch_mode, "📚 Em Vários Arquivos / Pastas (Lote)").clicked() {
+            d.batch_mode = true;
+            d.overwrite_original = true;
+        }
+    });
+    ui.add_space(6.0);
+
     let group = |ui: &mut egui::Ui, title: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
         ui.label(egui::RichText::new(tl!(title)).font(theme::semibold(13.0)));
         egui::Frame::new().fill(t.hover).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
@@ -248,175 +298,312 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
         });
         ui.add_space(8.0);
     };
-    group(ui, "Pages", &mut |ui| {
-        widgets::radio_value(ui, &mut d.pages, OcrPages::All, tl!("All pages"));
-        widgets::radio_value(ui, &mut d.pages, OcrPages::Current, tl!("Current page"));
-        ui.horizontal(|ui| {
-            widgets::radio_value(ui, &mut d.pages, OcrPages::Range, tl!("From"));
-            let on = d.pages == OcrPages::Range;
-            ui.add_enabled(on, egui::DragValue::new(&mut d.from).range(1..=pages));
-            ui.label(tl!("to"));
-            ui.add_enabled(on, egui::DragValue::new(&mut d.to).range(1..=pages));
-        });
-    });
-    group(ui, "Settings", &mut |ui| {
-        egui::Grid::new("ocr-settings").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label(tl!("Document language"));
-            let name = LANGUAGES.iter().find(|l| l.0 == d.language).map_or("English", |l| l.1);
-            craft_ui::ComboBox::from_id_salt("ocr-language").selected_text(tl!(name)).width(220.0).show_ui(ui, |ui| {
-                for (code, name) in LANGUAGES {
-                    ui.selectable_value(&mut d.language, (*code).to_string(), tl!(*name));
-                }
-            });
-            ui.end_row();
-            ui.label(tl!("Engine"));
-            let engine_name = match d.engine {
-                EngineChoice::Auto => tl!("Automatic"),
-                EngineChoice::Ocrs => tl!("Built-in"),
-                EngineChoice::Tesseract => tl!("Tesseract"),
-            };
-            craft_ui::ComboBox::from_id_salt("ocr-engine").selected_text(engine_name).width(220.0).show_ui(ui, |ui| {
-                let choices: [(EngineChoice, &str); 3] =
-                    [(EngineChoice::Auto, "Automatic"), (EngineChoice::Ocrs, "Built-in"), (EngineChoice::Tesseract, "Tesseract")];
-                for (choice, name) in choices {
-                    ui.selectable_value(&mut d.engine, choice, tl!(name));
-                }
-            });
-            ui.end_row();
-            ui.label(tl!("Combine engines"));
-            let strategy_name = match d.strategy {
-                MergeStrategy::PrimaryOnly => tl!("Primary only"),
-                MergeStrategy::ConfidenceWeighted => tl!("Confidence weighted"),
-                MergeStrategy::RoverVote => tl!("ROVER vote"),
-            };
-            craft_ui::ComboBox::from_id_salt("ocr-strategy").selected_text(strategy_name).width(220.0).show_ui(ui, |ui| {
-                let choices: [(MergeStrategy, &str); 3] = [
-                    (MergeStrategy::PrimaryOnly, "Primary only"),
-                    (MergeStrategy::ConfidenceWeighted, "Confidence weighted"),
-                    (MergeStrategy::RoverVote, "ROVER vote"),
-                ];
-                for (choice, name) in choices {
-                    ui.selectable_value(&mut d.strategy, choice, tl!(name));
-                }
-            });
-            ui.end_row();
-            ui.label(tl!("Output"));
-            let mode_name = match d.output_mode {
-                OutputMode::Searchable => tl!("Searchable Image (Exact)"),
-                OutputMode::EditableText => tl!("Editable text"),
-            };
-            craft_ui::ComboBox::from_id_salt("ocr-output").selected_text(mode_name).width(220.0).show_ui(ui, |ui| {
-                let s = ui
-                    .selectable_label(d.output_mode == OutputMode::Searchable, tl!("Searchable Image (Exact)"))
-                    .on_hover_text(tl!("Adds invisible text over each word; the page image is not changed"));
-                if s.clicked() {
-                    d.output_mode = OutputMode::Searchable;
-                }
-                let e = ui
-                    .selectable_label(d.output_mode == OutputMode::EditableText, tl!("Editable text"))
-                    .on_hover_text(tl!("Writes a new document of visible text; the scan is not changed"));
-                if e.clicked() {
-                    d.output_mode = OutputMode::EditableText;
-                }
-            });
-            ui.end_row();
-            ui.label(tl!("Downsample to"));
-            craft_ui::ComboBox::from_id_salt("ocr-dpi").selected_text(format!("{} dpi", d.dpi)).width(220.0).show_ui(ui, |ui| {
-                for v in [600, 300, 150, 72] {
-                    ui.selectable_value(&mut d.dpi, v, format!("{v} dpi"));
-                }
-            });
-            ui.end_row();
-        });
-        ui.add_space(4.0);
-        ui.add(crate::widgets::checkbox(&mut d.text_pages, tl!("Also recognize pages that already have text")))
-            .on_hover_text(tl!("Pictures on those pages are recognized too; words already in the page's text are not added again"));
-        ui.add(crate::widgets::checkbox(&mut d.auto_rotate, tl!("Straighten pages scanned sideways or upside down")));
-        ui.add(crate::widgets::checkbox(&mut d.deskew, tl!("Straighten skewed text lines")));
-        ui.add(crate::widgets::checkbox(&mut d.denoise, tl!("Remove scan speckle")));
-        ui.add(crate::widgets::checkbox(&mut d.binarize, tl!("Black and white (binarize)")));
-    });
-    group(ui, "Skip", &mut |ui| {
-        ui.add(crate::widgets::checkbox(&mut d.skip_text_pages, tl!("Skip pages that already have text")))
-            .on_hover_text(tl!("Pages with renderable text are left alone and reported as skipped"));
-        ui.add(crate::widgets::checkbox(&mut d.skip_text_files, tl!("Skip files that already have text")))
-            .on_hover_text(tl!("In multiple files: a file with any text is its own skipped bucket, and nothing is written for it"));
-        ui.add(crate::widgets::checkbox(&mut d.force_ocr, tl!("Force OCR (override skip options)")))
-            .on_hover_text(tl!("Reads pages and files even where the skip options would leave them alone"));
-    });
-    group(ui, "Output folder", &mut |ui| {
-        ui.horizontal(|ui| match &d.output_folder {
-            Some(f) => {
-                ui.monospace(f).on_hover_text(tl!("The searchable copies are written here under the source names"));
-                if ui.small_button(tl!("Clear")).clicked() {
-                    d.output_folder = None;
-                }
-            }
-            None => {
-                ui.label(tl!("Automatic")).on_hover_text(tl!("A folder is asked for when a multiple-file run starts"));
-            }
-        });
-    });
-    keep_asking_while_probing(ui.ctx());
-    // The web build has no model files: it downloads the models the first time they're needed.
-    #[cfg(target_arch = "wasm32")]
-    let downloading = d.engine != EngineChoice::Tesseract && pdfcraft_engine::ocr::engine_unavailable_reason(EngineChoice::Ocrs).is_some();
-    #[cfg(not(target_arch = "wasm32"))]
-    let downloading = false;
-    #[cfg(target_arch = "wasm32")]
-    if downloading {
-        match crate::ocr_web::state() {
-            crate::ocr_web::State::Failed(e) => {
+
+    // Barra de rolagem vertical para que nenhuma opção fique cortada
+    let max_scroll_h = (ui.available_height() - 56.0).clamp(220.0, 440.0);
+
+    egui::ScrollArea::vertical().max_height(max_scroll_h).auto_shrink([false, false]).show(ui, |ui| {
+        if d.batch_mode {
+            group(ui, "Arquivos e Pastas para Processar (Lote)", &mut |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    let msg = crate::i18n::fmt(tl!("Couldn't download the text recognition models: {e}"), &[("e", &e)]);
-                    ui.label(egui::RichText::new(msg).small().color(t.text_muted));
-                    if widgets::pill_button(ui, tl!("Download"), false).clicked() {
-                        crate::ocr_web::start(ui.ctx().clone());
+                    if ui.button("📄 Adicionar Arquivos PDF…").clicked() {
+                        pick_batch_files = true;
+                    }
+                    if ui.button("📁 Adicionar Pasta(s)…").clicked() {
+                        pick_batch_folders = true;
+                    }
+                    if !d.batch_paths.is_empty() && ui.button("🗑 Limpar Lista").clicked() {
+                        d.batch_paths.clear();
+                    }
+                });
+                ui.add_space(4.0);
+                if d.batch_paths.is_empty() {
+                    ui.label(
+                        egui::RichText::new("Nenhum arquivo ou pasta selecionado. Clique em \"Adicionar Arquivos PDF…\" ou \"Adicionar Pasta(s)…\".")
+                            .small()
+                            .color(t.text_muted),
+                    );
+                } else {
+                    ui.label(egui::RichText::new(format!("{} arquivo(s) PDF na fila para reconhecimento:", d.batch_paths.len())).strong().small());
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_black_alpha(18))
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .inner_margin(egui::Margin::same(6))
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical().id_salt("ocr_batch_paths_list").max_height(90.0).show(ui, |ui| {
+                                for (idx, p) in d.batch_paths.iter().enumerate() {
+                                    ui.monospace(format!("{}. {}", idx + 1, p.display()));
+                                }
+                            });
+                        });
+                }
+            });
+        } else {
+            group(ui, "Páginas", &mut |ui| {
+                widgets::radio_value(ui, &mut d.pages, OcrPages::All, tl!("Todas as páginas"));
+                widgets::radio_value(ui, &mut d.pages, OcrPages::Current, tl!("Página atual"));
+                ui.horizontal(|ui| {
+                    widgets::radio_value(ui, &mut d.pages, OcrPages::Range, tl!("De"));
+                    let on = d.pages == OcrPages::Range;
+                    ui.add_enabled(on, egui::DragValue::new(&mut d.from).range(1..=pages));
+                    ui.label(tl!("até"));
+                    ui.add_enabled(on, egui::DragValue::new(&mut d.to).range(1..=pages));
+                });
+            });
+        }
+
+        group(ui, "Configurações", &mut |ui| {
+            egui::Grid::new("ocr-settings").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label(tl!("Document language"));
+                let name = UI_LANGUAGES.iter().chain(LANGUAGES.iter()).find(|l| l.0 == d.language).map_or("Português (Brasil)", |l| l.1);
+                craft_ui::ComboBox::from_id_salt("ocr-language").selected_text(tl!(name)).width(220.0).show_ui(ui, |ui| {
+                    for (code, name) in UI_LANGUAGES {
+                        ui.selectable_value(&mut d.language, (*code).to_string(), tl!(*name));
+                    }
+                });
+                ui.end_row();
+
+                ui.label(tl!("Engine"));
+                let engine_name = match d.engine {
+                    EngineChoice::Auto => tl!("Automático"),
+                    EngineChoice::Ocrs => tl!("Built-in"),
+                    EngineChoice::Tesseract => tl!("Tesseract"),
+                };
+                craft_ui::ComboBox::from_id_salt("ocr-engine").selected_text(engine_name).width(220.0).show_ui(ui, |ui| {
+                    let choices: [(EngineChoice, &str); 3] =
+                        [(EngineChoice::Auto, "Automático"), (EngineChoice::Ocrs, "Built-in"), (EngineChoice::Tesseract, "Tesseract")];
+                    for (choice, name) in choices {
+                        ui.selectable_value(&mut d.engine, choice, tl!(name));
+                    }
+                });
+                ui.end_row();
+
+                ui.label(tl!("Combinar motores"));
+                let strategy_name = match d.strategy {
+                    MergeStrategy::PrimaryOnly => tl!("Só o mecanismo principal"),
+                    MergeStrategy::ConfidenceWeighted => tl!("Ponderado por confiança"),
+                    MergeStrategy::RoverVote => tl!("Votação ROVER"),
+                };
+                craft_ui::ComboBox::from_id_salt("ocr-strategy").selected_text(strategy_name).width(220.0).show_ui(ui, |ui| {
+                    let choices: [(MergeStrategy, &str); 3] = [
+                        (MergeStrategy::PrimaryOnly, "Só o mecanismo principal"),
+                        (MergeStrategy::ConfidenceWeighted, "Ponderado por confiança"),
+                        (MergeStrategy::RoverVote, "Votação ROVER"),
+                    ];
+                    for (choice, name) in choices {
+                        ui.selectable_value(&mut d.strategy, choice, tl!(name));
+                    }
+                });
+                ui.end_row();
+
+                ui.label(tl!("Saída"));
+                let mode_name = match d.output_mode {
+                    OutputMode::Searchable => tl!("Imagem pesquisável (Exata)"),
+                    OutputMode::EditableText => tl!("Texto editável"),
+                };
+                craft_ui::ComboBox::from_id_salt("ocr-output").selected_text(mode_name).width(220.0).show_ui(ui, |ui| {
+                    let s = ui
+                        .selectable_label(d.output_mode == OutputMode::Searchable, tl!("Imagem pesquisável (Exata)"))
+                        .on_hover_text(tl!("Adiciona texto invisível sobre cada palavra; a imagem da página não é alterada"));
+                    if s.clicked() {
+                        d.output_mode = OutputMode::Searchable;
+                    }
+                    let e = ui
+                        .selectable_label(d.output_mode == OutputMode::EditableText, tl!("Texto editável"))
+                        .on_hover_text(tl!("Gera um novo documento com texto visível e editável"));
+                    if e.clicked() {
+                        d.output_mode = OutputMode::EditableText;
+                    }
+                });
+                ui.end_row();
+
+                ui.label(tl!("Reduzir amostragem para"));
+                craft_ui::ComboBox::from_id_salt("ocr-dpi").selected_text(format!("{} dpi", d.dpi)).width(220.0).show_ui(ui, |ui| {
+                    for v in [600, 300, 150, 72] {
+                        ui.selectable_value(&mut d.dpi, v, format!("{v} dpi"));
+                    }
+                });
+                ui.end_row();
+            });
+
+            ui.add_space(6.0);
+            ui.add(crate::widgets::checkbox(&mut d.text_pages, tl!("Reconhecer também as páginas que já contêm texto")))
+                .on_hover_text(tl!("Fotos e imagens nessas páginas também serão lidas"));
+            ui.add(crate::widgets::checkbox(&mut d.auto_rotate, tl!("Endireitar páginas deitadas ou invertidas (auto-rotação)")))
+                .on_hover_text(tl!("Detecta e desvira automaticamente páginas escaneadas a 90°, 180° ou 270°"));
+            ui.add(crate::widgets::checkbox(&mut d.deskew, tl!("Alinhar e desinclinar linhas de texto tortas (deskew)")))
+                .on_hover_text(tl!("Endireita documentos digitalizados tortos"));
+            ui.add(crate::widgets::checkbox(&mut d.denoise, tl!("Remover ruídos e sujeiras de digitalização (denoise)")));
+            ui.add(crate::widgets::checkbox(&mut d.binarize, tl!("Converter para preto e branco (binarizar)")));
+        });
+
+        group(ui, "Opções de Pular / Ignorar", &mut |ui| {
+            ui.add(crate::widgets::checkbox(&mut d.skip_text_pages, tl!("Pular páginas que já têm texto")))
+                .on_hover_text(tl!("Páginas que já possuem texto não serão reprocessadas"));
+            ui.add(crate::widgets::checkbox(&mut d.skip_text_files, tl!("Pular arquivos que já têm texto")))
+                .on_hover_text(tl!("Em lote: arquivos com texto serão pulados"));
+            ui.add(crate::widgets::checkbox(&mut d.force_ocr, tl!("Forçar OCR (sobrepõe as opções de pular)")))
+                .on_hover_text(tl!("Lê todas as páginas mesmo que as opções de pular estejam ativas"));
+        });
+
+        group(ui, "Destino & Salvamento", &mut |ui| {
+            ui.add(crate::widgets::checkbox(&mut d.overwrite_original, tl!("Salvar na mesma pasta substituindo o original")))
+                .on_hover_text(tl!("Sobrescreve diretamente o arquivo original sem perguntar pasta de destino"));
+            if !d.overwrite_original {
+                ui.horizontal(|ui| {
+                    match &d.output_folder {
+                        Some(f) => {
+                            ui.monospace(f).on_hover_text(tl!("Os arquivos pesquisáveis serão salvos nesta pasta"));
+                            if ui.small_button(tl!("Limpar")).clicked() {
+                                d.output_folder = None;
+                            }
+                        }
+                        None => {
+                            ui.label(tl!("Automático (pergunta ao iniciar em lote)"));
+                        }
+                    }
+                    if ui.small_button("📁 Escolher Pasta…").clicked() {
+                        pick_output_folder = true;
                     }
                 });
             }
-            state => {
-                if state == crate::ocr_web::State::NotStarted {
-                    crate::ocr_web::start(ui.ctx().clone());
+        });
+
+        keep_asking_while_probing(ui.ctx());
+
+        #[cfg(target_arch = "wasm32")]
+        let downloading = d.engine != EngineChoice::Tesseract && pdfcraft_engine::ocr::engine_unavailable_reason(EngineChoice::Ocrs).is_some();
+        #[cfg(not(target_arch = "wasm32"))]
+        let downloading = false;
+        #[cfg(target_arch = "wasm32")]
+        if downloading {
+            match crate::ocr_web::state() {
+                crate::ocr_web::State::Failed(e) => {
+                    ui.horizontal_wrapped(|ui| {
+                        let msg = crate::i18n::fmt(tl!("Couldn't download the text recognition models: {e}"), &[("e", &e)]);
+                        ui.label(egui::RichText::new(msg).small().color(t.text_muted));
+                        if widgets::pill_button(ui, tl!("Download"), false).clicked() {
+                            crate::ocr_web::start(ui.ctx().clone());
+                        }
+                    });
                 }
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(egui::RichText::new(tl!("Downloading the text recognition models…")).small().color(t.text_muted));
-                });
+                state => {
+                    if state == crate::ocr_web::State::NotStarted {
+                        crate::ocr_web::start(ui.ctx().clone());
+                    }
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(egui::RichText::new(tl!("Downloading the text recognition models…")).small().color(t.text_muted));
+                    });
+                }
             }
+            ui.add_space(6.0);
         }
-        ui.add_space(6.0);
-    }
-    if let Some(why) = pdfcraft_engine::ocr::engine_unavailable_reason(d.engine).filter(|_| !downloading) {
-        // Said in the interface's language: the built-in engine's missing models get the
-        // notice users know; Tesseract's reasons are catalog keys of their own.
-        let text = match d.engine {
-            pdfcraft_engine::ocr::EngineChoice::Tesseract => crate::i18n::t(&why).to_string(),
-            _ => tl!("Text recognition isn't installed: its model files are missing. Reinstall PdfCraft, or set PDFCRAFT_MODELS to the folder that holds them.")
-                .to_string(),
-        };
-        ui.label(egui::RichText::new(text).small().color(t.text_muted));
-        ui.add_space(6.0);
-    }
+        if let Some(why) = pdfcraft_engine::ocr::engine_unavailable_reason(d.engine).filter(|_| !downloading) {
+            let text = match d.engine {
+                pdfcraft_engine::ocr::EngineChoice::Tesseract => crate::i18n::t(&why).to_string(),
+                _ => tl!("Reconhecimento de texto não está instalado: arquivos de modelo ausentes.").to_string(),
+            };
+            ui.label(egui::RichText::new(text).small().color(t.text_muted));
+            ui.add_space(6.0);
+        }
+    });
+
     ui.add_space(6.0);
+    ui.separator();
+    ui.add_space(6.0);
+
+    // Rodapé fixo - botões sempre visíveis e acessíveis
     let (mut go, mut cancel) = (false, false);
-    let can_run = pdfcraft_engine::ocr::engine_unavailable_reason(d.engine).is_none();
+    let can_run = pdfcraft_engine::ocr::engine_unavailable_reason(app.ocr_draft.engine).is_none()
+        && (!app.ocr_draft.batch_mode || !app.ocr_draft.batch_paths.is_empty());
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.add_enabled_ui(can_run, |ui| widgets::pill_button(ui, tl!("Recognize text"), true)).inner.clicked() {
+            let btn_label = if app.ocr_draft.batch_mode { tl!("Iniciar OCR em Lote") } else { tl!("Reconhecer texto") };
+            if ui.add_enabled_ui(can_run, |ui| widgets::pill_button(ui, btn_label, true)).inner.clicked() {
                 go = true;
             }
-            if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
+            if widgets::pill_button(ui, tl!("Cancelar"), false).clicked() {
                 cancel = true;
             }
         })
     });
+
+    if pick_batch_files {
+        app.pick_files(crate::files::FilePurpose::Ocr, true);
+    }
+    if pick_batch_folders {
+        app.pick_ocr_batch_folders();
+    }
+    if pick_output_folder {
+        let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Escolher pasta de destino para os arquivos PDF pesquisáveis"));
+        app.ask_one(crate::pickers::Ask::Folder(dialog), None, |app, dir| {
+            app.ocr_draft.output_folder = Some(dir.to_string_lossy().into_owned());
+        });
+    }
+
     (go, cancel)
 }
 
 impl PdfCraftApp {
-    /// Recognize text on the pages chosen in the dialog, in the background.
+    /// Recursively collect `.pdf` files from chosen paths/folders and append to `ocr_draft.batch_paths`.
+    pub(crate) fn add_ocr_batch_paths(&mut self, paths: &[std::path::PathBuf]) {
+        fn collect_pdfs(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
+            if depth > 12 {
+                return;
+            }
+            if path.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    let mut list: Vec<std::path::PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+                    list.sort();
+                    for p in list {
+                        collect_pdfs(&p, out, depth + 1);
+                    }
+                }
+            } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) && !out.contains(&path.to_path_buf()) {
+                out.push(path.to_path_buf());
+            }
+        }
+        for p in paths {
+            collect_pdfs(p, &mut self.ocr_draft.batch_paths, 0);
+        }
+    }
+
+    /// Start standalone Windows Explorer shell OCR directly on one or more files or folders.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_ocr_shell_paths(&mut self, raw_paths: &[String]) {
+        self.ocr_standalone = true;
+        self.ocr_draft.batch_mode = true;
+        self.ocr_draft.overwrite_original = true;
+        self.ocr_draft.batch_paths.clear();
+        let pb: Vec<std::path::PathBuf> = raw_paths.iter().map(std::path::PathBuf::from).collect();
+        self.add_ocr_batch_paths(&pb);
+        let paths = std::mem::take(&mut self.ocr_draft.batch_paths);
+        if !paths.is_empty() {
+            self.start_ocr_batch_paths(paths);
+        }
+    }
+
+    /// Open native multi-folder picker to add one or more folders of PDFs to the OCR batch list.
+    pub fn pick_ocr_batch_folders(&mut self) {
+        let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Selecionar pasta(s) com arquivos PDF para OCR"));
+        self.ask(crate::pickers::Ask::Folders(dialog), None, |app, paths| {
+            app.add_ocr_batch_paths(&paths);
+        });
+    }
+
+    /// Recognize text on the pages chosen in the dialog (or run the queued batch), in the background.
     pub fn start_ocr(&mut self) {
+        if self.ocr_draft.batch_mode {
+            let paths = std::mem::take(&mut self.ocr_draft.batch_paths);
+            if paths.is_empty() {
+                self.notify("Adicione pelo menos um arquivo PDF ou pasta para iniciar o OCR em lote.");
+                return;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            self.start_ocr_batch_paths(paths);
+            return;
+        }
         let Some((vi, id)) = self.active_ids() else { return };
         if self.ocr_run.is_some() {
             self.notify_tr("Text recognition is already running");
@@ -438,6 +625,73 @@ impl PdfCraftApp {
         };
         let settings = d.settings();
         self.start_ocr_pages(id, &pages, settings, false);
+    }
+
+    /// Run batch OCR on full file paths, either overwriting in-place (`overwrite_original == true`)
+    /// or saving into the chosen output folder.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_ocr_batch_paths(&mut self, paths: Vec<std::path::PathBuf>) {
+        if self.ocr_batch_running() {
+            self.notify_tr("Text recognition is already running");
+            return;
+        }
+        let mut files_with_paths = Vec::new();
+        for p in paths {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file.pdf".into());
+            match std::fs::read(&p) {
+                Ok(b) => files_with_paths.push((p, name, b)),
+                Err(e) => {
+                    self.notify_fmt("Couldn't read {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
+                    return;
+                }
+            }
+        }
+        if files_with_paths.is_empty() {
+            return;
+        }
+        if self.ocr_draft.overwrite_original {
+            let settings = self.ocr_draft.settings();
+            let recognizers = match pdfcraft_engine::ocr::recognizers(&settings) {
+                Ok(r) => r,
+                Err(why) => {
+                    self.notify_error(why);
+                    return;
+                }
+            };
+            let progress = Arc::new(Mutex::new(BatchProgress { total: files_with_paths.len(), ..Default::default() }));
+            let p = progress.clone();
+            let lang = crate::i18n::current();
+            let javascript = self.session.javascript();
+            let path_map: std::collections::HashMap<String, std::path::PathBuf> =
+                files_with_paths.iter().map(|(path, _, _)| (path.to_string_lossy().into_owned(), path.clone())).collect();
+            let files: Vec<(String, Vec<u8>)> =
+                files_with_paths.into_iter().map(|(path, _, bytes)| (path.to_string_lossy().into_owned(), bytes)).collect();
+            let work = move || {
+                crate::i18n::set_current(lang);
+                let write = move |key: &str, r: &pdfcraft_engine::ocr::FileResult| {
+                    let target = path_map.get(key).cloned().unwrap_or_else(|| std::path::PathBuf::from(key));
+                    crate::editing::write_atomically(&target.to_string_lossy(), &r.bytes).map_err(|e| e.to_string())
+                };
+                let msg = pdfcraft_engine::guard(|| run_batch_files(files, settings, &recognizers, javascript, &p, write))
+                    .unwrap_or_else(|panic| failed(&panic));
+                if let Ok(mut s) = p.lock() {
+                    s.done = s.total;
+                    s.finished = true;
+                    s.logs.push(format!("🏁 Processo finalizado: {msg}"));
+                    s.message = Some(msg);
+                }
+            };
+            if self.run_inline {
+                work();
+            } else {
+                std::thread::Builder::new().name("pdfcraft-ocr-files".into()).spawn(work).ok();
+            }
+            self.ocr_batch = Some(progress);
+            self.poll_ocr();
+        } else {
+            let files: Vec<(String, Vec<u8>)> = files_with_paths.into_iter().map(|(_, name, b)| (name, b)).collect();
+            self.ocr_files(files);
+        }
     }
 
     /// Edit on a scanned page: like Acrobat's "Converting scanned page to Editable Text and
@@ -643,10 +897,9 @@ impl PdfCraftApp {
             ));
             return;
         }
-        // Collision pre-flight: a searchable copy never silently overwrites. Every target is
-        // checked before the first page is read; a collision stops the batch here.
+        // Collision pre-flight: a searchable copy never silently overwrites unless overwrite_original is enabled.
         #[cfg(not(target_arch = "wasm32"))]
-        {
+        if !self.ocr_draft.overwrite_original {
             let hits: Vec<String> = files
                 .iter()
                 .filter_map(|(name, _)| {
@@ -684,7 +937,7 @@ impl PdfCraftApp {
         if self.ocr_web_waiting.is_some() {
             return true;
         }
-        self.ocr_batch.is_some()
+        self.ocr_batch.as_ref().is_some_and(|b| b.lock().is_ok_and(|s| !s.finished))
     }
 
     /// The web build: read the files in Web Workers (advanced by [`Self::poll_ocr`]).
@@ -749,6 +1002,8 @@ impl PdfCraftApp {
                 .unwrap_or_else(|panic| failed(&panic));
             if let Ok(mut s) = p.lock() {
                 s.done = s.total;
+                s.finished = true;
+                s.logs.push(format!("🏁 Processo finalizado: {msg}"));
                 s.message = Some(msg);
             }
         };
@@ -849,11 +1104,30 @@ impl PdfCraftApp {
         #[cfg(target_arch = "wasm32")]
         self.pump_web_ocr();
         if let Some(b) = self.ocr_batch.clone() {
-            let msg = b.lock().map(|mut s| s.message.take().ok_or((s.done, s.total))).map_err(|e| e.to_string());
-            match msg {
-                Ok(Ok(m)) => {
-                    self.ocr_batch = None;
+            let state = b
+                .lock()
+                .map(|mut s| {
+                    if let Some(m) = s.message.take() {
+                        s.finished = true;
+                        Ok(Some(m))
+                    } else if s.finished {
+                        Ok(None)
+                    } else {
+                        Err((s.done, s.total))
+                    }
+                })
+                .map_err(|e| e.to_string());
+            match state {
+                Ok(Ok(Some(m))) => {
+                    if self.run_inline {
+                        self.ocr_batch = None;
+                    }
                     self.notify(m);
+                }
+                Ok(Ok(None)) => {
+                    if self.run_inline {
+                        self.ocr_batch = None;
+                    }
                 }
                 Ok(Err((done, total))) => {
                     let m = crate::i18n::fmt(
@@ -864,7 +1138,7 @@ impl PdfCraftApp {
                         self.notify(m);
                     }
                     if let Some(ctx) = &self.ctx {
-                        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                        ctx.request_repaint_after(std::time::Duration::from_millis(120));
                     }
                 }
                 // The worker stopped while holding the lock: it will never report back (#3919).
@@ -951,6 +1225,14 @@ impl PdfCraftApp {
                 {
                     view.document_changed(&info);
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                if !automatic
+                    && self.ocr_draft.overwrite_original
+                    && self.session.get(doc).and_then(|d| d.path.as_ref()).is_some()
+                    && self.active_ids().map(|(_, id)| id) == Some(doc)
+                {
+                    self.run_command("file.save");
+                }
                 // An automatic run that found nothing (a page that has text of its own) says nothing.
                 if automatic && words == 0 {
                     return;
@@ -1006,21 +1288,75 @@ pub(crate) fn run_batch_files(
         }
         if let Ok(mut s) = progress.lock() {
             s.done = i;
+            s.current_file = name.clone();
+            s.current_page = 0;
+            s.total_pages = 0;
+            s.logs.push(format!("▶ [{}/{}] Arquivo: {}", i + 1, total, name));
+            if s.logs.len() > 200 {
+                s.logs.remove(0);
+            }
         }
-        let r = pdfcraft_engine::ocr::recognize_file(&name, Arc::new(bytes), None, settings.clone(), recognizers, javascript, |_, _| true);
+        let r = pdfcraft_engine::ocr::recognize_file(&name, Arc::new(bytes), None, settings.clone(), recognizers, javascript, |cur, tot| {
+            if let Ok(mut s) = progress.lock() {
+                if cur < tot && (s.current_page != cur + 1 || s.total_pages != tot) {
+                    s.logs.push(format!("   • Processando página {} de {}...", cur + 1, tot));
+                    if s.logs.len() > 200 {
+                        s.logs.remove(0);
+                    }
+                }
+                s.current_page = if cur < tot { cur + 1 } else { tot };
+                s.total_pages = tot;
+                !s.cancel
+            } else {
+                true
+            }
+        });
         match r {
-            Ok(res) if res.skipped() => skipped += 1,
+            Ok(res) if res.skipped() => {
+                skipped += 1;
+                if let Ok(mut s) = progress.lock() {
+                    s.logs.push(format!("  ↳ Pulado: {} (já contém texto)", name));
+                }
+            }
             Ok(res) => match write(&name, &res) {
                 Ok(()) => {
                     ok += 1;
                     words += res.words();
+                    if let Ok(mut s) = progress.lock() {
+                        for p in &res.pages {
+                            if let Some(why) = &p.skipped {
+                                s.logs.push(format!("   ⚠ Página {}: pulada ({})", p.page + 1, why));
+                            }
+                            for note in &p.notes {
+                                let translated = if let Some(deg) = note.strip_prefix("Auto-rotated page by ") {
+                                    format!("Página rotacionada automaticamente em {deg} (endireitada)")
+                                } else if let Some(deg) = note.strip_prefix("Deskewed page by ") {
+                                    format!("Alinhamento de inclinação corrigido em {deg} (deskew)")
+                                } else {
+                                    note.clone()
+                                };
+                                s.logs.push(format!("   ↻ Página {}: {}", p.page + 1, translated));
+                            }
+                        }
+                        s.logs.push(format!("  ✓ Concluído: {} ({} páginas, {} palavras reconhecidas)", name, res.pages.len(), res.words()));
+                    }
                     if let Some(note) = low_confidence_note(&name, &res, settings.low_confidence_threshold) {
                         notes.push(note);
                     }
                 }
-                Err(e) => failed.push(format!("{name}: {e}")),
+                Err(e) => {
+                    failed.push(format!("{name}: {e}"));
+                    if let Ok(mut s) = progress.lock() {
+                        s.logs.push(format!("  ✗ Falha ao gravar {}: {}", name, e));
+                    }
+                }
             },
-            Err(e) => failed.push(format!("{name}: {e}")),
+            Err(e) => {
+                failed.push(format!("{name}: {e}"));
+                if let Ok(mut s) = progress.lock() {
+                    s.logs.push(format!("  ✗ Falha no processamento de {}: {}", name, e));
+                }
+            }
         }
     }
     batch_summary(ok, words, skipped, &failed, &notes, not_run)
@@ -1061,6 +1397,271 @@ fn batch_summary(ok: usize, words: usize, skipped: usize, failed: &[String], not
 /// "Recognize text failed: {e}", in the current language.
 fn failed(e: &str) -> String {
     crate::i18n::fmt(tl!("{label} failed: {e}"), &[("label", tl!("Recognize text")), ("e", e)])
+}
+
+/// Render the inner dashboard of the Batch OCR window (used both in the floating modal inside
+/// PDF Craft and in the standalone Windows Explorer context-menu mode `--ocr-shell`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_batch_ocr_dashboard_ui(
+    ui: &mut egui::Ui,
+    done: usize,
+    total: usize,
+    cur_file: &str,
+    cur_page: usize,
+    tot_pages: usize,
+    logs: &[String],
+    finished: bool,
+    cancel: &mut bool,
+    close_window: &mut bool,
+) {
+    ui.spacing_mut().item_spacing.y = 7.0;
+    let bar_w = ui.available_width().max(320.0);
+
+    let file_display = if cur_file.is_empty() { "Preparando arquivos..." } else { cur_file };
+    ui.label(egui::RichText::new(format!("📄 Arquivo Atual: {file_display}")).strong().size(14.0));
+    ui.label(
+        egui::RichText::new(format!("📑 Quantidade de Páginas: {}   |   Página em Processamento: {}", tot_pages.max(1), cur_page.max(1))).size(13.0),
+    );
+
+    ui.add_space(4.0);
+    // Progressbar 1: Página Atual (Azul Royal / Ciano Executivo)
+    let single_page_frac = if finished {
+        1.0
+    } else if tot_pages > 0 {
+        0.65
+    } else {
+        0.15
+    };
+    let color_bar1 = egui::Color32::from_rgb(0x02, 0x84, 0xC7);
+    ui.label(egui::RichText::new(format!("1️⃣ Progresso da Página Atual (Página {}):", cur_page.max(1))).strong().small().color(color_bar1));
+    ui.scope(|ui| {
+        ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
+        ui.add(
+            egui::ProgressBar::new(single_page_frac)
+                .desired_width(bar_w)
+                .desired_height(22.0)
+                .fill(color_bar1)
+                .text(if finished {
+                    "Página concluída (100%)".to_string()
+                } else {
+                    format!("Processando OCR e alinhamento da página {}...", cur_page.max(1))
+                })
+                .animate(!finished),
+        );
+    });
+
+    ui.add_space(2.0);
+    // Progressbar 2: Arquivo Atual (Verde Esmeralda Executivo)
+    let file_frac = if finished {
+        1.0
+    } else if tot_pages > 0 {
+        (cur_page as f32 / tot_pages as f32).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let color_bar2 = egui::Color32::from_rgb(0x16, 0xA3, 0x4A);
+    ui.label(
+        egui::RichText::new(format!("2️⃣ Progresso do Arquivo Atual (Página {} de {}):", cur_page.max(1), tot_pages.max(1)))
+            .strong()
+            .small()
+            .color(color_bar2),
+    );
+    ui.scope(|ui| {
+        ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
+        ui.add(
+            egui::ProgressBar::new(file_frac)
+                .desired_width(bar_w)
+                .desired_height(22.0)
+                .fill(color_bar2)
+                .text(format!("Página {} de {} ({:.0}%)", cur_page.max(1), tot_pages.max(1), file_frac * 100.0))
+                .animate(!finished),
+        );
+    });
+
+    ui.add_space(2.0);
+    // Progressbar 3: Total Geral do Lote (Roxo / Índigo Executivo)
+    let total_clamped = total.max(1);
+    let batch_frac = (done as f32 / total_clamped as f32).clamp(0.0, 1.0);
+    let color_bar3 = egui::Color32::from_rgb(0x7C, 0x3A, 0xED);
+    ui.label(
+        egui::RichText::new(format!("3️⃣ Progresso Total Geral ({} de {} arquivos concluídos):", done, total)).strong().small().color(color_bar3),
+    );
+    ui.scope(|ui| {
+        ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
+        ui.add(
+            egui::ProgressBar::new(batch_frac)
+                .desired_width(bar_w)
+                .desired_height(22.0)
+                .fill(color_bar3)
+                .text(format!("Arquivo {} de {} ({:.0}%)", done.min(total), total, batch_frac * 100.0))
+                .animate(!finished),
+        );
+    });
+
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new("📋 Log Detalhado em Tempo Real (Arquivos, Páginas, Ajustes e Erros):").small().strong());
+    let log_height = (ui.available_height() - 48.0).max(150.0);
+    egui::Frame::new()
+        .fill(egui::Color32::from_black_alpha(32))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(140)))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            // Barra de rolagem fixa (não flutuante), larga (14px) e com alto contraste, acompanhando o redimensionamento
+            ui.spacing_mut().scroll.floating = false;
+            ui.spacing_mut().scroll.bar_width = 14.0;
+            ui.spacing_mut().scroll.handle_min_length = 28.0;
+            ui.spacing_mut().scroll.bar_inner_margin = 4.0;
+            ui.visuals_mut().extreme_bg_color = egui::Color32::from_black_alpha(45);
+            ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_rgb(0x64, 0x74, 0x8B);
+            ui.visuals_mut().widgets.hovered.bg_fill = egui::Color32::from_rgb(0x33, 0x41, 0x55);
+            ui.visuals_mut().widgets.active.bg_fill = egui::Color32::from_rgb(0x0F, 0x17, 0x2A);
+
+            egui::ScrollArea::vertical()
+                .id_salt("batch_ocr_live_log_scroll")
+                .max_height(log_height)
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    for line in logs {
+                        ui.monospace(line);
+                    }
+                });
+        });
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if finished {
+                if widgets::pill_button(ui, tl!("Fechar"), true).clicked() {
+                    *close_window = true;
+                }
+            } else if ui.button(tl!("Cancelar Operação")).clicked() {
+                *cancel = true;
+            }
+        });
+    });
+}
+
+/// Render the standalone full-window OCR progress view when launched from Windows Explorer (`--ocr-shell`).
+pub fn show_standalone_ocr_window(app: &mut PdfCraftApp, ui: &mut egui::Ui, ctx: &egui::Context) {
+    let t = Tokens::get(ctx);
+    let mut cancel = false;
+    let mut close_window = false;
+    let data = app
+        .ocr_batch
+        .as_ref()
+        .and_then(|b| b.lock().ok().map(|s| (s.done, s.total, s.current_file.clone(), s.current_page, s.total_pages, s.logs.clone(), s.finished)));
+
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(t.card).inner_margin(egui::Margin::symmetric(18, 14))).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            widgets::artcraft_mark(ui, 32.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("PDF Craft — Reconhecimento de Texto em Lote (OCR)").font(theme::semibold(17.0)));
+                ui.label(egui::RichText::new("Execução direta via Windows Explorer · Alinhamento e OCR Automático").small().color(t.text_muted));
+            });
+        });
+        ui.separator();
+        if let Some((done, total, cur_file, cur_page, tot_pages, logs, finished)) = data {
+            draw_batch_ocr_dashboard_ui(ui, done, total, &cur_file, cur_page, tot_pages, &logs, finished, &mut cancel, &mut close_window);
+        } else {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(egui::RichText::new("Reconhecimento OCR concluído.").font(theme::semibold(16.0)));
+                ui.add_space(12.0);
+                if widgets::pill_button(ui, "Fechar Janela", true).clicked() {
+                    close_window = true;
+                }
+            });
+        }
+    });
+
+    if cancel {
+        app.cancel_ocr_batch();
+    }
+    if close_window {
+        app.ocr_batch = None;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+}
+
+/// Floating windows displaying real-time triple progress bars and console logs for OCR operations.
+pub fn show_ocr_progress_windows(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    // 1. Batch OCR Floating Window (3 Progress Bars + Detailed Header + Real-time Log Console)
+    if let Some(ref b) = app.ocr_batch {
+        let mut cancel = false;
+        let mut close_window = false;
+        let data = b.lock().ok().map(|s| (s.done, s.total, s.current_file.clone(), s.current_page, s.total_pages, s.logs.clone(), s.finished));
+
+        if let Some((done, total, cur_file, cur_page, tot_pages, logs, finished)) = data {
+            egui::Window::new(tl!("Reconhecimento de Texto em Lote (OCR)"))
+                .id(egui::Id::unique("batch_ocr_floating_window"))
+                .collapsible(false)
+                .resizable(true)
+                .default_size([760.0, 520.0])
+                .min_width(680.0)
+                .min_height(420.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    draw_batch_ocr_dashboard_ui(ui, done, total, &cur_file, cur_page, tot_pages, &logs, finished, &mut cancel, &mut close_window);
+                });
+        }
+
+        if cancel {
+            app.cancel_ocr_batch();
+        }
+        if close_window {
+            app.ocr_batch = None;
+        }
+    }
+
+    // 2. Single Document / Current Page OCR Progress Window (2.4)
+    if let Some(ref run) = app.ocr_run
+        && run.automatic.is_none()
+    {
+        let mut cancel = false;
+        let doc_name = app.session.get(run.doc).map(|d| d.name.clone()).unwrap_or_else(|| "Documento atual".into());
+        let data = run.progress.lock().ok().map(|s| (s.done, s.total));
+        if let Some((done, total)) = data {
+            egui::Window::new(tl!("Reconhecendo Texto (OCR)"))
+                .id(egui::Id::unique("single_ocr_floating_window"))
+                .collapsible(false)
+                .resizable(false)
+                .fixed_size([440.0, 210.0])
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    let tot = total.max(1);
+                    let cur = (done + 1).min(tot);
+                    let frac = (done as f32 / tot as f32).clamp(0.0, 1.0);
+
+                    ui.label(egui::RichText::new(format!("📄 Documento: {doc_name}")).strong().size(14.0));
+                    ui.label(egui::RichText::new(format!("📑 Página em processamento: {} de {}", cur, tot)).size(13.0));
+
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(format!("Progresso da Página Atual (Página {cur}):")).small().strong());
+                    ui.add(egui::ProgressBar::new(0.65).text(format!("Reconhecendo texto e ajustando alinhamento da página {cur}...")).animate(true));
+
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(format!("Progresso Total do Documento ({done} de {tot} páginas):")).small().strong());
+                    ui.add(egui::ProgressBar::new(frac).text(format!("Página {cur} de {tot} ({:.0}%)", frac * 100.0)).animate(true));
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.button(tl!("Cancelar")).clicked() {
+                                cancel = true;
+                            }
+                        });
+                    });
+                });
+        }
+        if cancel {
+            app.cancel_ocr();
+        }
+    }
 }
 
 /// `recognize`, with a panic in it (a damaged model, a page the recognizer can't take) turned into

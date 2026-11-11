@@ -1,51 +1,36 @@
-<p align="center">
-  <a href="https://getartcraft.com/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/artcraft-logo-white.svg">
-      <img alt="ArtCraft" src="docs/brand/artcraft-logo.svg" width="200">
-    </picture>
-  </a>
-</p>
+# 📑 PDF Craft (Edição Executiva)
 
+"O ambiente definitivo de trabalho com documentos PDF — Leitor, Editor e Reconhecimento OCR de Alta Precisão em Rust puro, com acabamento visual executivo e 100% autônomo."
 
 <p align="center">
-  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png" width="128" height="128" alt="PdfCraft icon: an engraved lion on a red tile">
-</p>
-
-<h1 align="center">PdfCraft</h1>
-
-<p align="center">
-  <b>The PDF workbench; an open-source, modern PDF reader and editor, built in pure Rust.</b><br>
-  Read, organize, combine, split and secure PDFs in a fast, native app, written in Rust from the ground up.<br>
-  macOS · Windows · Linux · FreeBSD · the web
+  <img src="assets/app-icon/pdfcraft-1024.png" width="160" height="160" alt="Ícone Oficial PDF Craft 3D">
 </p>
 
 <p align="center">
-  <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-b70228?style=flat-square">
-  <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-8a011e?style=flat-square">
-  <img alt="Platforms: macOS, Windows, Linux, FreeBSD, web" src="https://img.shields.io/badge/runs%20on-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20FreeBSD%20%C2%B7%20web-b70228?style=flat-square">
-  <img alt="No account, no telemetry" src="https://img.shields.io/badge/no%20account-no%20telemetry-8a011e?style=flat-square">
-  <br>
-  <a href="https://sonarcloud.io/project/overview?id=storytold_pdfcraft"><img alt="Scanned by SonarCloud" src="https://img.shields.io/badge/Scanned_by-SonarCloud-4b9fd5?style=flat-square&logo=sonarqubecloud&logoColor=white"></a>
-  <a href="https://coderabbit.ai"><img alt="Reviewed by CodeRabbit" src="https://img.shields.io/coderabbit/prs/github/storytold/pdfcraft?style=flat-square&label=Reviewed%20by%20CodeRabbit&logo=coderabbit"></a>
-</p>
-
-<p align="center">
-  <a href="https://discord.gg/artcraft"><img alt="Join the ArtCraft community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+  <img alt="Versão" src="https://img.shields.io/badge/VERSÃO-v0.20.0-007ACC?style=for-the-badge">
+  <img alt="Build" src="https://img.shields.io/badge/BUILD-20261111.10-success?style=for-the-badge">
+  <img alt="Linguagem" src="https://img.shields.io/badge/RUST-EDITION_2024-orange?style=for-the-badge&logo=rust">
+  <img alt="OCR" src="https://img.shields.io/badge/OCR-ONNX_EMBEDDED-purple?style=for-the-badge">
+  <img alt="Plataforma" src="https://img.shields.io/badge/PLATAFORMA-WINDOWS_10_%2F_11-blue?style=for-the-badge&logo=windows">
+  <img alt="Privacidade" src="https://img.shields.io/badge/TELEMETRIA-ZERO_(100%25_OFFLINE)-critical?style=for-the-badge">
 </p>
 
 ---
 
-# 🚀 PDF Craft — Edição Executiva Customizada
-> **Engenharia de Melhorias, Otimizações & Customizações:** Marcos Pires  
-> **Versão Oficial:** v0.20.0 | **Build Determinístico:** 20261111.10 | **Ambiente:** Windows 10/11 x64  
-> **Repositório Oficial:** [github.com/mparnaldo/PDF-Craft](https://github.com/mparnaldo/PDF-Craft)
+## 📖 Sobre o Projeto
 
-Esta é a distribuição corporativa e otimizada do **PDF Craft**, desenvolvida para entregar máxima fidelidade, acabamento visual executivo no padrão Adobe Acrobat, recursos avançados de OCR com integração ao Windows Explorer e portabilidade autônoma e determinística.
+O **PDF Craft (Edição Executiva)** foi aprimorado e customizado por **Marcos Pires** para transformar um leitor e editor de PDF moderno escrito em Rust em uma suíte executiva completa, robusta e determinística.
+
+Diferente de visualizadores convencionais ou leitores pesados com assinaturas recorrentes, esta distribuição une a velocidade e segurança de memória do Rust a uma experiência de usuário profissional inspirada no padrão corporativo da Adobe, trazendo recursos essenciais para produtividade diária:
+- **Reconhecimento OCR em Lote Integrado ao Windows Explorer:** Reconheça textos com um clique no botão direito sem carregar o aplicativo.
+- **Compartilhamento Direto:** Envio instantâneo via WhatsApp Web/Desktop e Microsoft Outlook (`outlook.exe /a`).
+- **Identidade Visual 3D sem Poluição:** Ícone de aplicativo em origami 3D e ícone de documento (.pdf) encadernado com recorte alfa transparente.
+- **Ambiente Executivo Harmonioso:** 8 temas corporativos com contraste chumbo de ponta a ponta na barra superior e galeria de temas compacta.
+- **Portabilidade Total (Zero Dependências Externas):** Roda direto em qualquer Windows recém-formatado, com as DLLs do runtime C++ MSVC embutidas.
 
 ---
 
-## 🎯 O que o Programa Faz
+## 🎯 O que o Programa Faz (Funcionalidades Detalhadas)
 
 ### 1. 🔍 Reconhecimento Óptico de Caracteres (OCR) Avançado & em Lote
 - **OCR Integrado e Standalone:** Realiza reconhecimento de texto de alta precisão em múltiplos idiomas (Português do Brasil, Inglês, Espanhol e Japonês) usando modelos neurais ONNX locais (`text-detection` e `text-recognition`).
@@ -126,6 +111,8 @@ powershell -ExecutionPolicy Bypass -File "scratch\embed_icons_clean.ps1"
 O pacote de instalação final será gerado em: `dist\PDFCraft-Setup-0.20.0.exe`.
 
 ---
+
+## 🌐 Informações e Créditos do Projeto Base (ArtCraft)
 
 <p align="center">
   <a href="https://getartcraft.com/apps/pdfcraft"><b>PdfCraft on getartcraft.com</b></a> ·
